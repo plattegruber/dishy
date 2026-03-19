@@ -1,0 +1,37 @@
+# Rust
+target/
+*.wasm
+!build/worker/
+
+# Flutter
+apps/mobile/build/
+apps/mobile/.dart_tool/
+apps/mobile/.flutter-plugins
+apps/mobile/.flutter-plugins-dependencies
+apps/mobile/.packages
+apps/mobile/.pub-cache/
+apps/mobile/.pub/
+
+# General
+.env*
+!.env.example
+.DS_Store
+node_modules/
+*.log
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/settings.json
+!.vscode/extensions.json
+*.iml
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Generated
+*.g.dart
+*.freezed.dart
