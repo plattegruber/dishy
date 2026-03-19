@@ -36,22 +36,16 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> worker::Result<Response
 ///
 /// Returns a JSON payload with the API status and version number.
 /// Used by monitoring systems and CI/CD to verify the Worker is operational.
-async fn handle_health(
-    _req: Request,
-    _ctx: worker::RouteContext<()>,
-) -> worker::Result<Response> {
+async fn handle_health(_req: Request, _ctx: worker::RouteContext<()>) -> worker::Result<Response> {
     let body = HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
     };
 
-    let json = serde_json::to_string(&body)
-        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+    let json = serde_json::to_string(&body).map_err(|e| worker::Error::RustError(e.to_string()))?;
 
     Response::ok(json).map(|mut resp| {
-        let _ = resp
-            .headers_mut()
-            .set("Content-Type", "application/json");
+        let _ = resp.headers_mut().set("Content-Type", "application/json");
         resp
     })
 }
