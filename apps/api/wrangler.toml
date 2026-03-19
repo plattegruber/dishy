@@ -4,3 +4,9 @@ compatibility_date = "2024-09-23"
 
 [build]
 command = "cargo install worker-build && worker-build --release"
+
+[vars]
+AXIOM_DATASET = "dishy-api"
+
+# AXIOM_API_TOKEN is a secret — set via:
+#   npx wrangler secret put AXIOM_API_TOKEN

@@ -22,7 +22,10 @@ Recipe Capture & Cooking App. Convert messy, ephemeral food content into structu
 ├── docs/adr/                   # Architecture Decision Records
 ├── apps/
 │   ├── api/                    # Cloudflare Worker (Rust)
-│   │   ├── src/lib.rs          # Worker entry point & routes
+│   │   ├── src/
+│   │   │   ├── lib.rs          # Worker entry point & routes
+│   │   │   ├── logging.rs      # Structured logging & Axiom transport
+│   │   │   └── middleware.rs   # Correlation ID extraction & propagation
 │   │   ├── tests/              # Rust tests
 │   │   ├── Cargo.toml          # Rust dependencies
 │   │   └── wrangler.toml       # Cloudflare Worker config
@@ -33,7 +36,9 @@ Recipe Capture & Cooking App. Convert messy, ephemeral food content into structu
 │       │   ├── presentation/   # Screens, widgets, providers
 │       │   ├── domain/         # Entities, use cases
 │       │   ├── data/           # Repositories, API client
-│       │   └── core/           # Constants, utilities
+│       │   └── core/
+│       │       ├── constants/  # App-wide configuration
+│       │       └── logging/    # Structured logging, Axiom transport, correlation providers
 │       ├── test/               # Widget & unit tests
 │       └── pubspec.yaml        # Dart dependencies
 └── .github/workflows/          # CI/CD pipelines
@@ -123,10 +128,20 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8787
 
 - **API CI** (`api.yml`): Runs on PRs and pushes to `main` affecting `apps/api/`. Checks formatting, clippy, tests, and builds the Worker.
 - **Mobile CI** (`mobile.yml`): Runs on PRs and pushes to `main` affecting `apps/mobile/`. Runs analyze, tests, and a debug APK build.
-- **Deploy API** (`deploy-api.yml`): On merge to `main`, builds and deploys the Worker to Cloudflare. Requires `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets.
+- **Deploy API** (`deploy-api.yml`): On merge to `main`, builds and deploys the Worker to Cloudflare. Requires `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, and `AXIOM_API_TOKEN` secrets.
+
+## Observability
+
+Structured JSON logs are sent to [Axiom](https://axiom.co) from both the API and mobile app. Every HTTP request carries an `X-Correlation-ID` (UUIDv4, generated per request) and `X-Session-ID` (UUIDv4, generated per app session) header, linking frontend and backend logs.
+
+- **Backend:** Logs are buffered per request and flushed to the `dishy-api` Axiom dataset. The `AXIOM_API_TOKEN` secret must be set via `npx wrangler secret put AXIOM_API_TOKEN`.
+- **Frontend:** Logs are batched and sent to the `dishy-mobile` Axiom dataset. Pass the token at build time: `--dart-define=AXIOM_API_TOKEN=<token>`.
+
+See [ADR-002: Observability](docs/adr/002-observability.md) for the full design rationale.
 
 ## Documentation
 
 - [Product Specification](SPEC.md)
 - [Project Intelligence](CLAUDE.md)
 - [ADR-001: Tech Stack Selection](docs/adr/001-tech-stack.md)
+- [ADR-002: Observability](docs/adr/002-observability.md)
