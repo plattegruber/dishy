@@ -206,9 +206,10 @@ async fn verify_signature(
     signature_b64: &str,
     jwk: &Jwk,
 ) -> Result<(), AuthError> {
-    use js_sys::{ArrayBuffer, Object, Reflect, Uint8Array};
-    use wasm_bindgen::JsValue;
-    use wasm_bindgen_futures::JsFuture;
+    use worker::js_sys::{self, Object, Reflect, Uint8Array};
+    use worker::wasm_bindgen::JsCast;
+    use worker::wasm_bindgen::JsValue;
+    use worker::wasm_bindgen_futures::JsFuture;
 
     // Get the global crypto.subtle object
     let global = js_sys::global();
@@ -290,7 +291,7 @@ async fn verify_signature(
         )
         .map_err(|e| AuthError::CryptoError(format!("importKey call failed: {e:?}")))?;
 
-    let crypto_key = JsFuture::from(js_sys::Promise::from(import_promise))
+    let crypto_key: JsValue = JsFuture::from(js_sys::Promise::from(import_promise))
         .await
         .map_err(|e| AuthError::CryptoError(format!("importKey rejected: {e:?}")))?;
 
@@ -321,7 +322,7 @@ async fn verify_signature(
         )
         .map_err(|e| AuthError::CryptoError(format!("verify call failed: {e:?}")))?;
 
-    let result = JsFuture::from(js_sys::Promise::from(verify_promise))
+    let result: JsValue = JsFuture::from(js_sys::Promise::from(verify_promise))
         .await
         .map_err(|e| AuthError::CryptoError(format!("verify rejected: {e:?}")))?;
 
