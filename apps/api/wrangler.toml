@@ -4,3 +4,15 @@ compatibility_date = "2024-09-23"
 
 [build]
 command = "cargo install worker-build && worker-build --release"
+
+[vars]
+# Clerk publishable key — safe to include in source control.
+# Replace with your actual publishable key from the Clerk Dashboard.
+CLERK_PUBLISHABLE_KEY = "pk_test_REPLACE_ME"
+
+# Clerk JWKS endpoint for JWT verification.
+# Default uses the Clerk Backend API; override if using a custom domain.
+CLERK_JWKS_URL = "https://api.clerk.com/v1/jwks"
+
+# Note: CLERK_SECRET_KEY must be set as a secret, not a var.
+# Run: npx wrangler secret put CLERK_SECRET_KEY

@@ -17,6 +17,16 @@ abstract final class AppConstants {
     defaultValue: 'https://dishy-api.workers.dev',
   );
 
+  /// Clerk publishable key for authentication.
+  ///
+  /// Defaults to a test placeholder. Override with
+  /// `--dart-define=CLERK_PUBLISHABLE_KEY=pk_live_xxx` for production
+  /// or `--dart-define=CLERK_PUBLISHABLE_KEY=pk_test_xxx` for development.
+  static const String clerkPublishableKey = String.fromEnvironment(
+    'CLERK_PUBLISHABLE_KEY',
+    defaultValue: 'pk_test_REPLACE_ME',
+  );
+
   /// Application display name.
   static const String appName = 'Dishy';
 }
