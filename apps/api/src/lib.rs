@@ -6,9 +6,12 @@
 //! correlation ID middleware for cross-service observability via Axiom.
 
 pub mod auth;
+pub mod db;
 pub mod errors;
 pub mod logging;
 pub mod middleware;
+pub mod pipeline;
+pub mod types;
 
 use std::collections::HashMap;
 
