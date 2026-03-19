@@ -27,7 +27,10 @@ Recipe Capture & Cooking App. Convert messy, ephemeral food content into structu
 │   │   │   ├── auth.rs         # Clerk JWT verification (RS256 via Web Crypto)
 │   │   │   ├── errors.rs       # Typed auth & API error responses
 │   │   │   ├── logging.rs      # Structured logging & Axiom transport
-│   │   │   └── middleware.rs   # Correlation IDs, auth extraction, logging context
+│   │   │   ├── middleware.rs   # Correlation IDs, auth extraction, logging context
+│   │   │   ├── types/          # Domain types from SPEC §8
+│   │   │   ├── db/             # D1 database schema, migrations, queries
+│   │   │   └── pipeline/       # Capture pipeline contracts (SPEC §9)
 │   │   ├── tests/              # Rust tests
 │   │   ├── Cargo.toml          # Rust dependencies
 │   │   └── wrangler.toml       # Cloudflare Worker config
@@ -36,7 +39,7 @@ Recipe Capture & Cooking App. Convert messy, ephemeral food content into structu
 │       │   ├── main.dart       # App entry point (Clerk initialisation)
 │       │   ├── app.dart        # MaterialApp + GoRouter + auth guard
 │       │   ├── presentation/   # Screens, widgets, providers
-│       │   ├── domain/         # Entities, use cases
+│       │   ├── domain/         # Domain model (freezed types mirroring SPEC §8)
 │       │   ├── data/           # Repositories, API client (auth + correlation interceptors)
 │       │   └── core/
 │       │       ├── auth/       # Auth state, provider, guard
@@ -166,6 +169,38 @@ flutter run --dart-define=CLERK_PUBLISHABLE_KEY=pk_test_your-key-here
 
 See [ADR-003: Authentication](docs/adr/003-authentication.md) for the full design rationale.
 
+## Database (Cloudflare D1)
+
+The API uses Cloudflare D1 (SQLite) for all entity persistence. The schema is defined in `apps/api/src/db/schema.sql` with migrations in `apps/api/src/db/migrations/`.
+
+### Setup
+
+```bash
+# Create the D1 database (one-time)
+npx wrangler d1 create dishy-db
+
+# Update wrangler.toml with the database_id from the output above
+
+# Apply migrations locally
+npx wrangler d1 migrations apply DB --local
+
+# Apply migrations to production
+npx wrangler d1 migrations apply DB --remote
+```
+
+### Tables
+
+| Table | Purpose |
+|-------|---------|
+| `capture_inputs` | Raw user input that initiated the capture pipeline |
+| `extraction_artifacts` | Versioned extraction results (never overwritten) |
+| `recipes` | Canonical resolved recipes |
+| `recipe_ingredients` | Resolved ingredients for each recipe |
+| `recipe_steps` | Ordered instruction steps for each recipe |
+| `user_recipe_views` | Per-user overlay (saves, favorites, notes, patches) |
+
+See [ADR-004: Domain Model](docs/adr/004-domain-model.md) for the full schema design rationale.
+
 ## Running All Tests
 
 ```bash
@@ -198,3 +233,4 @@ See [ADR-002: Observability](docs/adr/002-observability.md) for the full design 
 - [ADR-001: Tech Stack Selection](docs/adr/001-tech-stack.md)
 - [ADR-002: Observability](docs/adr/002-observability.md)
 - [ADR-003: Authentication](docs/adr/003-authentication.md)
+- [ADR-004: Domain Model](docs/adr/004-domain-model.md)

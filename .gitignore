@@ -32,6 +32,5 @@ node_modules/
 .DS_Store
 **/.DS_Store
 
-# Generated
-*.g.dart
-*.freezed.dart
+# Generated Dart files (freezed, json_serializable) are committed to the repo.
+# Regenerate with: cd apps/mobile && dart run build_runner build --delete-conflicting-outputs

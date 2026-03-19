@@ -15,3 +15,15 @@ CLERK_PUBLISHABLE_KEY = "pk_test_placeholder"
 
 # CLERK_SECRET_KEY is a secret — set via:
 #   npx wrangler secret put CLERK_SECRET_KEY
+
+# D1 Database — create with:
+#   npx wrangler d1 create dishy-db
+# Then replace the database_id below with the real ID.
+# Apply migrations with:
+#   npx wrangler d1 migrations apply DB --local   (local dev)
+#   npx wrangler d1 migrations apply DB --remote  (production)
+[[d1_databases]]
+binding = "DB"
+database_name = "dishy-db"
+database_id = "placeholder-replace-after-d1-create"
+migrations_dir = "src/db/migrations"
