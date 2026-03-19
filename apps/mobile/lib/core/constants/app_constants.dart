@@ -19,4 +19,20 @@ abstract final class AppConstants {
 
   /// Application display name.
   static const String appName = 'Dishy';
+
+  /// Axiom dataset name for mobile client logs.
+  ///
+  /// Override with `--dart-define=AXIOM_DATASET=custom-name` if needed.
+  static const String axiomDataset = String.fromEnvironment(
+    'AXIOM_DATASET',
+    defaultValue: 'dishy-mobile',
+  );
+
+  /// Axiom API token for log ingestion.
+  ///
+  /// Must be set via `--dart-define=AXIOM_API_TOKEN=<token>` at build
+  /// time. When empty, log flushing to Axiom is skipped.
+  static const String axiomApiToken = String.fromEnvironment(
+    'AXIOM_API_TOKEN',
+  );
 }
