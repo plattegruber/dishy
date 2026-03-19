@@ -7,10 +7,14 @@
 /// Every outgoing request automatically includes `X-Correlation-ID`
 /// (a fresh UUIDv4) and `X-Session-ID` headers so that backend logs
 /// can be correlated with frontend logs in Axiom.
+///
+/// Authenticated requests also include a `Bearer` token in the
+/// `Authorization` header, obtained from the [AuthNotifier].
 library;
 
 import 'package:dio/dio.dart';
 
+import '../../core/auth/auth_provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/logging/log_service.dart';
 
@@ -82,35 +86,86 @@ class CorrelationInterceptor extends Interceptor {
   }
 }
 
+/// Dio interceptor that attaches the Clerk session Bearer token to
+/// every outgoing request.
+///
+/// Works alongside [CorrelationInterceptor] — this interceptor runs
+/// first to add the `Authorization` header, then the correlation
+/// interceptor adds tracking headers.
+class AuthInterceptor extends Interceptor {
+  /// Creates an [AuthInterceptor] backed by the given [authNotifier].
+  ///
+  /// The notifier is read on each request to get the current session
+  /// token. If no token is available the request proceeds without an
+  /// `Authorization` header (for unauthenticated endpoints like
+  /// `/health`).
+  AuthInterceptor({required AuthNotifier authNotifier})
+      : _authNotifier = authNotifier;
+
+  final AuthNotifier _authNotifier;
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final String? token = _authNotifier.sessionToken;
+    if (token != null && token.isNotEmpty) {
+      options.headers['Authorization'] = 'Bearer $token';
+    }
+    handler.next(options);
+  }
+}
+
 /// Typed API client for the Dishy backend.
 ///
 /// Wraps [Dio] with pre-configured base URL, timeouts, headers, and
-/// a [CorrelationInterceptor] that attaches `X-Correlation-ID` and
-/// `X-Session-ID` to every request. All methods return strongly-typed
-/// responses — no `dynamic` types.
+/// interceptors for authentication and correlation ID tracking. All
+/// methods return strongly-typed responses — no `dynamic` types.
 class ApiClient {
-  /// Creates an [ApiClient] with the given [logService].
+  /// Creates an [ApiClient] with the given [logService] and optional
+  /// [authNotifier].
   ///
   /// If no [dio] instance is provided, a default one is created with
-  /// the production base URL from [AppConstants] and a
-  /// [CorrelationInterceptor] for automatic header injection.
-  ApiClient({required LogService logService, Dio? dio})
-      : _dio = dio ??
-            (Dio(
-              BaseOptions(
-                baseUrl: AppConstants.apiBaseUrl,
-                connectTimeout: const Duration(seconds: 10),
-                receiveTimeout: const Duration(seconds: 10),
-                headers: <String, String>{
-                  'Content-Type': 'application/json',
-                  'Accept': 'application/json',
-                },
-              ),
-            )..interceptors.add(
-                CorrelationInterceptor(logService: logService),
-              ));
+  /// the production base URL from [AppConstants], an [AuthInterceptor]
+  /// for Bearer token injection, and a [CorrelationInterceptor] for
+  /// automatic header injection and logging.
+  ApiClient({
+    required LogService logService,
+    AuthNotifier? authNotifier,
+    Dio? dio,
+  }) : _dio = dio ??
+            _createDefaultDio(
+              logService: logService,
+              authNotifier: authNotifier,
+            );
 
   final Dio _dio;
+
+  /// Creates the default Dio instance with all interceptors.
+  static Dio _createDefaultDio({
+    required LogService logService,
+    AuthNotifier? authNotifier,
+  }) {
+    final Dio dio = Dio(
+      BaseOptions(
+        baseUrl: AppConstants.apiBaseUrl,
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 10),
+        headers: <String, String>{
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ),
+    );
+
+    // Auth interceptor runs first to add the Bearer token.
+    if (authNotifier != null) {
+      dio.interceptors.add(AuthInterceptor(authNotifier: authNotifier));
+    }
+
+    // Correlation interceptor runs second to add tracking headers and log.
+    dio.interceptors.add(CorrelationInterceptor(logService: logService));
+
+    return dio;
+  }
 
   /// Checks whether the API is reachable and healthy.
   ///
@@ -119,6 +174,17 @@ class ApiClient {
   Future<Map<String, Object>> getHealth() async {
     final Response<Map<String, Object>> response =
         await _dio.get<Map<String, Object>>('/health');
+    return response.data ?? <String, Object>{};
+  }
+
+  /// Fetches the authenticated user's profile from the API.
+  ///
+  /// Calls `GET /me` with the Bearer token. Requires an active session.
+  /// Throws a [DioException] on failure (including 401 if the token is
+  /// invalid or expired).
+  Future<Map<String, Object>> getMe() async {
+    final Response<Map<String, Object>> response =
+        await _dio.get<Map<String, Object>>('/me');
     return response.data ?? <String, Object>{};
   }
 }

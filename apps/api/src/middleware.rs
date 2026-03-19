@@ -1,14 +1,23 @@
-//! Request middleware for correlation ID propagation and logging context.
+//! Request middleware for correlation ID propagation, logging context, and
+//! authentication.
 //!
 //! Extracts `X-Correlation-ID` and `X-Session-ID` headers from incoming
 //! requests (generating a UUIDv4 for the correlation ID if none is
 //! provided). These IDs are attached to a [`RequestContext`] that handlers
 //! use throughout the request lifecycle, and the correlation ID is echoed
 //! back on every response.
+//!
+//! The [`authenticate_request`] function extends this pipeline by extracting
+//! the Bearer token from the `Authorization` header and verifying it as a
+//! Clerk JWT, producing [`AuthClaims`] on success.
+
+use std::collections::HashMap;
 
 use uuid::Uuid;
 use worker::Request;
 
+use crate::auth::{self, AuthClaims};
+use crate::errors::AuthError;
 use crate::logging::Logger;
 
 /// Header name for the correlation ID.
@@ -16,6 +25,12 @@ pub const CORRELATION_ID_HEADER: &str = "X-Correlation-ID";
 
 /// Header name for the session ID.
 pub const SESSION_ID_HEADER: &str = "X-Session-ID";
+
+/// Header name for the authorization token.
+pub const AUTHORIZATION_HEADER: &str = "Authorization";
+
+/// Bearer token prefix (case-insensitive matching is applied).
+const BEARER_PREFIX: &str = "Bearer ";
 
 /// Per-request context carrying correlation metadata and a logger.
 ///
@@ -88,6 +103,109 @@ pub fn attach_correlation_header(
     Ok(())
 }
 
+/// Extracts the Bearer token from the `Authorization` header.
+///
+/// Expects the header value to be in `Bearer <token>` format (with a
+/// case-insensitive prefix match). Returns only the token portion.
+fn extract_bearer_token(req: &Request) -> Result<String, AuthError> {
+    let auth_header = req
+        .headers()
+        .get(AUTHORIZATION_HEADER)
+        .ok()
+        .flatten()
+        .ok_or(AuthError::MissingAuthHeader)?;
+
+    if auth_header.len() <= BEARER_PREFIX.len() {
+        return Err(AuthError::InvalidAuthHeaderFormat);
+    }
+
+    let prefix = &auth_header[..BEARER_PREFIX.len()];
+    if !prefix.eq_ignore_ascii_case(BEARER_PREFIX) {
+        return Err(AuthError::InvalidAuthHeaderFormat);
+    }
+
+    let token = auth_header[BEARER_PREFIX.len()..].trim().to_string();
+    if token.is_empty() {
+        return Err(AuthError::InvalidAuthHeaderFormat);
+    }
+
+    Ok(token)
+}
+
+/// Authenticates an incoming request by verifying the Bearer JWT.
+///
+/// Extracts the token from the `Authorization` header, verifies it
+/// against Clerk's JWKS endpoint, and returns the decoded claims on
+/// success. Logs authentication outcomes (success or failure) to the
+/// request's [`Logger`] for observability.
+///
+/// # Arguments
+///
+/// * `req` — The incoming Worker request.
+/// * `request_ctx` — The request context with logger for structured logging.
+/// * `jwks_url` — The Clerk JWKS endpoint URL.
+///
+/// # Errors
+///
+/// Returns an [`AuthError`] if the token is missing, malformed, expired,
+/// or fails signature verification.
+pub async fn authenticate_request(
+    req: &Request,
+    request_ctx: &RequestContext,
+    jwks_url: &str,
+) -> Result<AuthClaims, AuthError> {
+    request_ctx.logger.debug(
+        "Attempting JWT authentication",
+        HashMap::from([(
+            "jwks_url".to_string(),
+            serde_json::Value::String(jwks_url.to_string()),
+        )]),
+    );
+
+    let token = match extract_bearer_token(req) {
+        Ok(t) => t,
+        Err(e) => {
+            request_ctx.logger.warn(
+                "Authentication failed: missing or invalid Authorization header",
+                HashMap::from([(
+                    "error_code".to_string(),
+                    serde_json::Value::String(e.code().to_string()),
+                )]),
+            );
+            return Err(e);
+        }
+    };
+
+    match auth::verify_token(&token, jwks_url).await {
+        Ok(claims) => {
+            request_ctx.logger.info(
+                "Authentication successful",
+                HashMap::from([(
+                    "user_id".to_string(),
+                    serde_json::Value::String(claims.sub.clone()),
+                )]),
+            );
+            Ok(claims)
+        }
+        Err(e) => {
+            request_ctx.logger.warn(
+                "Authentication failed: JWT verification error",
+                HashMap::from([
+                    (
+                        "error_code".to_string(),
+                        serde_json::Value::String(e.code().to_string()),
+                    ),
+                    (
+                        "error_message".to_string(),
+                        serde_json::Value::String(e.to_string()),
+                    ),
+                ]),
+            );
+            Err(e)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,6 +218,11 @@ mod tests {
     #[test]
     fn session_id_header_constant_is_correct() {
         assert_eq!(SESSION_ID_HEADER, "X-Session-ID");
+    }
+
+    #[test]
+    fn authorization_header_constant_is_correct() {
+        assert_eq!(AUTHORIZATION_HEADER, "Authorization");
     }
 
     #[test]
