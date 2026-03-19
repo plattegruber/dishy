@@ -24,19 +24,22 @@ Recipe Capture & Cooking App. Convert messy, ephemeral food content into structu
 │   ├── api/                    # Cloudflare Worker (Rust)
 │   │   ├── src/
 │   │   │   ├── lib.rs          # Worker entry point & routes
+│   │   │   ├── auth.rs         # Clerk JWT verification (RS256 via Web Crypto)
+│   │   │   ├── errors.rs       # Typed auth & API error responses
 │   │   │   ├── logging.rs      # Structured logging & Axiom transport
-│   │   │   └── middleware.rs   # Correlation ID extraction & propagation
+│   │   │   └── middleware.rs   # Correlation IDs, auth extraction, logging context
 │   │   ├── tests/              # Rust tests
 │   │   ├── Cargo.toml          # Rust dependencies
 │   │   └── wrangler.toml       # Cloudflare Worker config
 │   └── mobile/                 # Flutter app (iOS + Android)
 │       ├── lib/
-│       │   ├── main.dart       # App entry point
-│       │   ├── app.dart        # MaterialApp + GoRouter setup
+│       │   ├── main.dart       # App entry point (Clerk initialisation)
+│       │   ├── app.dart        # MaterialApp + GoRouter + auth guard
 │       │   ├── presentation/   # Screens, widgets, providers
 │       │   ├── domain/         # Entities, use cases
-│       │   ├── data/           # Repositories, API client
+│       │   ├── data/           # Repositories, API client (auth + correlation interceptors)
 │       │   └── core/
+│       │       ├── auth/       # Auth state, provider, guard
 │       │       ├── constants/  # App-wide configuration
 │       │       └── logging/    # Structured logging, Axiom transport, correlation providers
 │       ├── test/               # Widget & unit tests
@@ -67,6 +70,13 @@ The local dev server runs at `http://localhost:8787`. Test the health endpoint:
 curl http://localhost:8787/health
 # → {"status":"ok","version":"0.1.0"}
 ```
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | No | Health check — returns `{"status":"ok","version":"..."}` |
+| GET | `/me` | Yes | Returns authenticated user's claims from the JWT |
 
 ### Linting
 
@@ -114,6 +124,48 @@ When running the API locally with `wrangler dev`, pass the local URL:
 flutter run --dart-define=API_BASE_URL=http://localhost:8787
 ```
 
+## Authentication
+
+Dishy uses [Clerk](https://clerk.com) for authentication. The Flutter app uses the `clerk_flutter` SDK for sign-in flows, and the Rust Worker verifies Clerk-issued JWTs using RS256 signature verification via the Web Crypto API.
+
+### Setup
+
+1. Create a Clerk application at [dashboard.clerk.com](https://dashboard.clerk.com).
+2. Enable the Email/Password sign-in strategy.
+3. Copy your keys:
+
+**API (Cloudflare Worker):**
+
+```bash
+# Set the Clerk secret key
+npx wrangler secret put CLERK_SECRET_KEY
+```
+
+Update `wrangler.toml` with your JWKS URL and publishable key:
+
+```toml
+[vars]
+CLERK_JWKS_URL = "https://api.clerk.com/v1/jwks"
+CLERK_PUBLISHABLE_KEY = "pk_test_your-key-here"
+```
+
+**Mobile (Flutter):**
+
+```bash
+flutter run --dart-define=CLERK_PUBLISHABLE_KEY=pk_test_your-key-here
+```
+
+### Auth Flow
+
+1. User opens the app and sees the sign-in screen (unauthenticated).
+2. User signs in via Clerk (email/password).
+3. Clerk issues a JWT session token.
+4. The mobile app attaches the token as `Authorization: Bearer <token>` to all API requests.
+5. The Worker verifies the JWT against Clerk's JWKS and extracts user claims.
+6. All auth events are logged through the structured logging pipeline for observability.
+
+See [ADR-003: Authentication](docs/adr/003-authentication.md) for the full design rationale.
+
 ## Running All Tests
 
 ```bash
@@ -145,3 +197,4 @@ See [ADR-002: Observability](docs/adr/002-observability.md) for the full design 
 - [Project Intelligence](CLAUDE.md)
 - [ADR-001: Tech Stack Selection](docs/adr/001-tech-stack.md)
 - [ADR-002: Observability](docs/adr/002-observability.md)
+- [ADR-003: Authentication](docs/adr/003-authentication.md)
