@@ -17,13 +17,15 @@
 //! unit-tested outside of the Workers environment. Integration tests
 //! should use `wrangler dev --test` or Miniflare.
 
+// Imports are cfg-gated because the query functions are only compiled on wasm32.
+// On non-wasm targets, a const block ensures the types are referenced to catch
+// breakage early.
+#[cfg(target_arch = "wasm32")]
 use crate::types::capture::{CaptureInput, ExtractionArtifact};
-use crate::types::ids::{CaptureId, RecipeId, UserId};
-use crate::types::ingredient::ResolvedIngredient;
-use crate::types::nutrition::NutritionComputation;
-use crate::types::recipe::{
-    CoverOutput, RecipePatch, ResolvedRecipe, Source, Step, UserRecipeView,
-};
+#[cfg(target_arch = "wasm32")]
+use crate::types::ids::{CaptureId, UserId};
+#[cfg(target_arch = "wasm32")]
+use crate::types::recipe::{ResolvedRecipe, UserRecipeView};
 
 /// Errors that can occur during database operations.
 #[derive(Debug, thiserror::Error)]
@@ -66,6 +68,8 @@ pub async fn insert_capture_input(
     user_id: &UserId,
     input: &CaptureInput,
 ) -> Result<(), DbError> {
+    use worker::wasm_bindgen::JsValue;
+
     let input_type = match input {
         CaptureInput::SocialLink { .. } => "social_link",
         CaptureInput::Screenshot { .. } => "screenshot",
@@ -85,12 +89,12 @@ pub async fn insert_capture_input(
 
     statement
         .bind(&[
-            worker::d1::D1Type::Text(id.as_str().to_string()),
-            worker::d1::D1Type::Text(user_id.as_str().to_string()),
-            worker::d1::D1Type::Text(input_type.to_string()),
-            worker::d1::D1Type::Text(input_data),
-            worker::d1::D1Type::Text(now.clone()),
-            worker::d1::D1Type::Text(now),
+            JsValue::from_str(id.as_str()),
+            JsValue::from_str(user_id.as_str()),
+            JsValue::from_str(input_type),
+            JsValue::from_str(&input_data),
+            JsValue::from_str(&now),
+            JsValue::from_str(&now),
         ])
         .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
         .run()
@@ -117,6 +121,8 @@ pub async fn insert_extraction_artifact(
     artifact_id: &str,
     artifact: &ExtractionArtifact,
 ) -> Result<(), DbError> {
+    use worker::wasm_bindgen::JsValue;
+
     let ingredients_json = serde_json::to_string(&artifact.ingredients)
         .map_err(|e| DbError::SerializationError(e.to_string()))?;
     let steps_json = serde_json::to_string(&artifact.steps)
@@ -132,29 +138,33 @@ pub async fn insert_extraction_artifact(
         "INSERT INTO extraction_artifacts (id, capture_id, version, raw_text, ocr_text, transcript, ingredients_json, steps_json, images_json, source_json, confidence, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
     );
 
+    let raw_text_val = match &artifact.raw_text {
+        Some(t) => JsValue::from_str(t),
+        None => JsValue::null(),
+    };
+    let ocr_text_val = match &artifact.ocr_text {
+        Some(t) => JsValue::from_str(t),
+        None => JsValue::null(),
+    };
+    let transcript_val = match &artifact.transcript {
+        Some(t) => JsValue::from_str(t),
+        None => JsValue::null(),
+    };
+
     statement
         .bind(&[
-            worker::d1::D1Type::Text(artifact_id.to_string()),
-            worker::d1::D1Type::Text(artifact.id.as_str().to_string()),
-            worker::d1::D1Type::Integer(artifact.version as i32),
-            match &artifact.raw_text {
-                Some(t) => worker::d1::D1Type::Text(t.clone()),
-                None => worker::d1::D1Type::Null,
-            },
-            match &artifact.ocr_text {
-                Some(t) => worker::d1::D1Type::Text(t.clone()),
-                None => worker::d1::D1Type::Null,
-            },
-            match &artifact.transcript {
-                Some(t) => worker::d1::D1Type::Text(t.clone()),
-                None => worker::d1::D1Type::Null,
-            },
-            worker::d1::D1Type::Text(ingredients_json),
-            worker::d1::D1Type::Text(steps_json),
-            worker::d1::D1Type::Text(images_json),
-            worker::d1::D1Type::Text(source_json),
-            worker::d1::D1Type::Real(artifact.confidence),
-            worker::d1::D1Type::Text(now),
+            JsValue::from_str(artifact_id),
+            JsValue::from_str(artifact.id.as_str()),
+            JsValue::from_f64(f64::from(artifact.version)),
+            raw_text_val,
+            ocr_text_val,
+            transcript_val,
+            JsValue::from_str(&ingredients_json),
+            JsValue::from_str(&steps_json),
+            JsValue::from_str(&images_json),
+            JsValue::from_str(&source_json),
+            JsValue::from_f64(artifact.confidence),
+            JsValue::from_str(&now),
         ])
         .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
         .run()
@@ -182,6 +192,8 @@ pub async fn insert_recipe(
     db: &worker::d1::D1Database,
     recipe: &ResolvedRecipe,
 ) -> Result<(), DbError> {
+    use worker::wasm_bindgen::JsValue;
+
     let source_json = serde_json::to_string(&recipe.source)
         .map_err(|e| DbError::SerializationError(e.to_string()))?;
     let nutrition_json = serde_json::to_string(&recipe.nutrition)
@@ -193,6 +205,15 @@ pub async fn insert_recipe(
 
     let now = chrono::Utc::now().to_rfc3339();
 
+    let servings_val = match recipe.servings {
+        Some(s) => JsValue::from_f64(f64::from(s)),
+        None => JsValue::null(),
+    };
+    let time_val = match recipe.time_minutes {
+        Some(t) => JsValue::from_f64(f64::from(t)),
+        None => JsValue::null(),
+    };
+
     // Insert the recipe row
     let recipe_stmt = db.prepare(
         "INSERT INTO recipes (id, title, servings, time_minutes, source_json, nutrition_json, cover_json, tags_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
@@ -200,22 +221,16 @@ pub async fn insert_recipe(
 
     recipe_stmt
         .bind(&[
-            worker::d1::D1Type::Text(recipe.id.as_str().to_string()),
-            worker::d1::D1Type::Text(recipe.title.clone()),
-            match recipe.servings {
-                Some(s) => worker::d1::D1Type::Integer(s),
-                None => worker::d1::D1Type::Null,
-            },
-            match recipe.time_minutes {
-                Some(t) => worker::d1::D1Type::Integer(t),
-                None => worker::d1::D1Type::Null,
-            },
-            worker::d1::D1Type::Text(source_json),
-            worker::d1::D1Type::Text(nutrition_json),
-            worker::d1::D1Type::Text(cover_json),
-            worker::d1::D1Type::Text(tags_json),
-            worker::d1::D1Type::Text(now.clone()),
-            worker::d1::D1Type::Text(now.clone()),
+            JsValue::from_str(recipe.id.as_str()),
+            JsValue::from_str(&recipe.title),
+            servings_val,
+            time_val,
+            JsValue::from_str(&source_json),
+            JsValue::from_str(&nutrition_json),
+            JsValue::from_str(&cover_json),
+            JsValue::from_str(&tags_json),
+            JsValue::from_str(&now),
+            JsValue::from_str(&now),
         ])
         .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
         .run()
@@ -236,12 +251,12 @@ pub async fn insert_recipe(
         );
 
         stmt.bind(&[
-            worker::d1::D1Type::Text(ingredient_id),
-            worker::d1::D1Type::Text(recipe.id.as_str().to_string()),
-            worker::d1::D1Type::Integer(idx as i32),
-            worker::d1::D1Type::Text(ingredient.parsed.name.clone()),
-            worker::d1::D1Type::Text(parsed_json),
-            worker::d1::D1Type::Text(resolution_json),
+            JsValue::from_str(&ingredient_id),
+            JsValue::from_str(recipe.id.as_str()),
+            JsValue::from_f64(idx as f64),
+            JsValue::from_str(&ingredient.parsed.name),
+            JsValue::from_str(&parsed_json),
+            JsValue::from_str(&resolution_json),
         ])
         .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
         .run()
@@ -253,19 +268,21 @@ pub async fn insert_recipe(
     for step in &recipe.steps {
         let step_id = format!("{}_{}", recipe.id.as_str(), step.number);
 
+        let step_time_val = match step.time_minutes {
+            Some(t) => JsValue::from_f64(f64::from(t)),
+            None => JsValue::null(),
+        };
+
         let stmt = db.prepare(
             "INSERT INTO recipe_steps (id, recipe_id, step_number, instruction, time_minutes) VALUES (?1, ?2, ?3, ?4, ?5)"
         );
 
         stmt.bind(&[
-            worker::d1::D1Type::Text(step_id),
-            worker::d1::D1Type::Text(recipe.id.as_str().to_string()),
-            worker::d1::D1Type::Integer(step.number),
-            worker::d1::D1Type::Text(step.instruction.clone()),
-            match step.time_minutes {
-                Some(t) => worker::d1::D1Type::Integer(t),
-                None => worker::d1::D1Type::Null,
-            },
+            JsValue::from_str(&step_id),
+            JsValue::from_str(recipe.id.as_str()),
+            JsValue::from_f64(f64::from(step.number)),
+            JsValue::from_str(&step.instruction),
+            step_time_val,
         ])
         .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
         .run()
@@ -291,9 +308,16 @@ pub async fn upsert_user_recipe_view(
     db: &worker::d1::D1Database,
     view: &UserRecipeView,
 ) -> Result<(), DbError> {
+    use worker::wasm_bindgen::JsValue;
+
     let patches_json = serde_json::to_string(&view.patches)
         .map_err(|e| DbError::SerializationError(e.to_string()))?;
     let now = chrono::Utc::now().to_rfc3339();
+
+    let notes_val = match &view.notes {
+        Some(n) => JsValue::from_str(n),
+        None => JsValue::null(),
+    };
 
     let statement = db.prepare(
         "INSERT INTO user_recipe_views (recipe_id, user_id, saved, favorite, notes, patches_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(recipe_id, user_id) DO UPDATE SET saved = ?3, favorite = ?4, notes = ?5, patches_json = ?6, updated_at = ?8"
@@ -301,17 +325,14 @@ pub async fn upsert_user_recipe_view(
 
     statement
         .bind(&[
-            worker::d1::D1Type::Text(view.recipe_id.as_str().to_string()),
-            worker::d1::D1Type::Text(view.user_id.as_str().to_string()),
-            worker::d1::D1Type::Integer(i32::from(view.saved)),
-            worker::d1::D1Type::Integer(i32::from(view.favorite)),
-            match &view.notes {
-                Some(n) => worker::d1::D1Type::Text(n.clone()),
-                None => worker::d1::D1Type::Null,
-            },
-            worker::d1::D1Type::Text(patches_json),
-            worker::d1::D1Type::Text(now.clone()),
-            worker::d1::D1Type::Text(now),
+            JsValue::from_str(view.recipe_id.as_str()),
+            JsValue::from_str(view.user_id.as_str()),
+            JsValue::from_f64(f64::from(i32::from(view.saved))),
+            JsValue::from_f64(f64::from(i32::from(view.favorite))),
+            notes_val,
+            JsValue::from_str(&patches_json),
+            JsValue::from_str(&now),
+            JsValue::from_str(&now),
         ])
         .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
         .run()
@@ -321,23 +342,23 @@ pub async fn upsert_user_recipe_view(
     Ok(())
 }
 
-// Silence unused import warnings for non-wasm targets (types used in wasm-gated functions)
+// Verify domain types are importable on non-wasm targets (catches breakage early).
 #[cfg(not(target_arch = "wasm32"))]
 const _: () = {
-    fn _assert_types_used() {
-        let _ = std::any::type_name::<CaptureInput>();
-        let _ = std::any::type_name::<ExtractionArtifact>();
-        let _ = std::any::type_name::<CaptureId>();
-        let _ = std::any::type_name::<RecipeId>();
-        let _ = std::any::type_name::<UserId>();
-        let _ = std::any::type_name::<ResolvedIngredient>();
-        let _ = std::any::type_name::<NutritionComputation>();
-        let _ = std::any::type_name::<CoverOutput>();
-        let _ = std::any::type_name::<RecipePatch>();
-        let _ = std::any::type_name::<ResolvedRecipe>();
-        let _ = std::any::type_name::<Source>();
-        let _ = std::any::type_name::<Step>();
-        let _ = std::any::type_name::<UserRecipeView>();
+    fn _assert_types_exist() {
+        let _ = std::any::type_name::<crate::types::capture::CaptureInput>();
+        let _ = std::any::type_name::<crate::types::capture::ExtractionArtifact>();
+        let _ = std::any::type_name::<crate::types::ids::CaptureId>();
+        let _ = std::any::type_name::<crate::types::ids::RecipeId>();
+        let _ = std::any::type_name::<crate::types::ids::UserId>();
+        let _ = std::any::type_name::<crate::types::ingredient::ResolvedIngredient>();
+        let _ = std::any::type_name::<crate::types::nutrition::NutritionComputation>();
+        let _ = std::any::type_name::<crate::types::recipe::CoverOutput>();
+        let _ = std::any::type_name::<crate::types::recipe::RecipePatch>();
+        let _ = std::any::type_name::<crate::types::recipe::ResolvedRecipe>();
+        let _ = std::any::type_name::<crate::types::recipe::Source>();
+        let _ = std::any::type_name::<crate::types::recipe::Step>();
+        let _ = std::any::type_name::<crate::types::recipe::UserRecipeView>();
     }
 };
 
