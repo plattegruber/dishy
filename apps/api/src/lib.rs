@@ -1,9 +1,10 @@
-//! Dishy API — Cloudflare Worker entry point.
+//! Dishy API -- Cloudflare Worker entry point.
 //!
 //! This module sets up the Worker router and defines the available HTTP routes.
-//! Currently serves a health check endpoint (unauthenticated) and a `/me`
-//! endpoint (authenticated via Clerk JWT). All requests are wrapped with
-//! correlation ID middleware for cross-service observability via Axiom.
+//! Serves a health check endpoint (unauthenticated), an authenticated `/me`
+//! endpoint, and recipe CRUD endpoints (authenticated via Clerk JWT). All
+//! requests are wrapped with correlation ID middleware for cross-service
+//! observability via Axiom.
 
 pub mod auth;
 pub mod db;
@@ -11,6 +12,8 @@ pub mod errors;
 pub mod logging;
 pub mod middleware;
 pub mod pipeline;
+pub mod routes;
+pub mod services;
 pub mod types;
 
 use std::collections::HashMap;
@@ -59,6 +62,15 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> worker::Result<Response
         .get_async("/me", |req, route_ctx| async move {
             handle_me(req, route_ctx).await
         })
+        .post_async("/recipes/capture", |req, route_ctx| async move {
+            crate::routes::recipes::handle_capture(req, route_ctx).await
+        })
+        .get_async("/recipes", |req, route_ctx| async move {
+            crate::routes::recipes::handle_list_recipes(req, route_ctx).await
+        })
+        .get_async("/recipes/:id", |req, route_ctx| async move {
+            crate::routes::recipes::handle_get_recipe(req, route_ctx).await
+        })
         .run(req, env)
         .await
 }
@@ -70,7 +82,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> worker::Result<Response
 /// logs to Axiom at the end of the request. Used by monitoring systems
 /// and CI/CD to verify the Worker is operational.
 ///
-/// This endpoint is **unauthenticated** — no Bearer token required.
+/// This endpoint is **unauthenticated** -- no Bearer token required.
 async fn handle_health(req: Request, ctx: worker::RouteContext<()>) -> worker::Result<Response> {
     let request_ctx = extract_request_context(&req);
 

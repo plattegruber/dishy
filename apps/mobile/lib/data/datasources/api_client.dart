@@ -187,4 +187,46 @@ class ApiClient {
         await _dio.get<Map<String, Object>>('/me');
     return response.data ?? <String, Object>{};
   }
+
+  /// Captures a recipe from raw text via the extraction pipeline.
+  ///
+  /// Calls `POST /recipes/capture` with the manual input text.
+  /// The API runs Claude extraction, structures the recipe, and saves it.
+  /// Returns the saved recipe as a JSON map.
+  ///
+  /// Throws a [DioException] on failure.
+  Future<Map<String, Object?>> captureRecipe(String text) async {
+    final Response<Map<String, Object?>> response =
+        await _dio.post<Map<String, Object?>>(
+      '/recipes/capture',
+      data: <String, String>{
+        'input_type': 'manual',
+        'text': text,
+      },
+    );
+    return response.data ?? <String, Object?>{};
+  }
+
+  /// Fetches all recipes for the authenticated user.
+  ///
+  /// Calls `GET /recipes` and returns a list of recipe JSON maps.
+  /// Throws a [DioException] on failure.
+  Future<List<Map<String, Object?>>> getRecipes() async {
+    final Response<List<Object?>> response =
+        await _dio.get<List<Object?>>('/recipes');
+    final List<Object?> data = response.data ?? <Object?>[];
+    return data
+        .whereType<Map<String, Object?>>()
+        .toList();
+  }
+
+  /// Fetches a single recipe by ID.
+  ///
+  /// Calls `GET /recipes/:id` and returns the recipe JSON map.
+  /// Throws a [DioException] on failure (including 404 if not found).
+  Future<Map<String, Object?>> getRecipe(String id) async {
+    final Response<Map<String, Object?>> response =
+        await _dio.get<Map<String, Object?>>('/recipes/$id');
+    return response.data ?? <String, Object?>{};
+  }
 }

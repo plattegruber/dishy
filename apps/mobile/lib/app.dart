@@ -3,6 +3,12 @@
 /// Configures the [GoRouter] with an authentication guard that redirects
 /// unauthenticated users to the sign-in screen. The router is rebuilt
 /// whenever the auth state changes via a Riverpod [refreshListenable].
+///
+/// Routes:
+/// - `/` -- recipe list (home)
+/// - `/capture` -- capture screen
+/// - `/recipes/:id` -- recipe detail
+/// - `/sign-in` -- sign-in screen
 library;
 
 import 'package:flutter/material.dart';
@@ -12,7 +18,9 @@ import 'package:go_router/go_router.dart';
 import 'core/auth/auth_guard.dart';
 import 'core/auth/auth_provider.dart';
 import 'core/auth/auth_state.dart';
-import 'presentation/screens/home_screen.dart';
+import 'presentation/screens/capture_screen.dart';
+import 'presentation/screens/recipe_detail_screen.dart';
+import 'presentation/screens/recipe_list_screen.dart';
 import 'presentation/screens/sign_in_screen.dart';
 
 /// Provides the [GoRouter] instance configured with auth-aware routing.
@@ -30,7 +38,20 @@ final Provider<GoRouter> routerProvider = Provider<GoRouter>((Ref ref) {
       GoRoute(
         path: homePath,
         builder: (BuildContext context, GoRouterState state) {
-          return const HomeScreen();
+          return const RecipeListScreen();
+        },
+      ),
+      GoRoute(
+        path: '/capture',
+        builder: (BuildContext context, GoRouterState state) {
+          return const CaptureScreen();
+        },
+      ),
+      GoRoute(
+        path: '/recipes/:id',
+        builder: (BuildContext context, GoRouterState state) {
+          final String recipeId = state.pathParameters['id'] ?? '';
+          return RecipeDetailScreen(recipeId: recipeId);
         },
       ),
       GoRoute(

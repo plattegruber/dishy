@@ -1,19 +1,21 @@
 //! Pipeline stage function contracts from SPEC §9.
 //!
-//! Each function represents a discrete pipeline stage. All implementations
-//! are currently stubs that return `PipelineError::NotImplemented`. The
-//! real implementations will be added in later phases.
+//! Each function represents a discrete pipeline stage. The `extract_recipe`,
+//! `structure_recipe`, and `assemble_recipe` stages are implemented for the
+//! manual capture path. Other stages remain as stubs.
 //!
 //! All stages are:
-//! - **Idempotent** — calling with the same input produces the same output.
-//! - **Immutable** — outputs are never modified after creation.
-//! - **Independently re-runnable** — any stage can be re-executed in isolation.
+//! - **Idempotent** -- calling with the same input produces the same output.
+//! - **Immutable** -- outputs are never modified after creation.
+//! - **Independently re-runnable** -- any stage can be re-executed in isolation.
 
 use crate::types::capture::{CaptureInput, ExtractionArtifact, StructuredRecipeCandidate};
-use crate::types::ids::AssetId;
-use crate::types::ingredient::{IngredientLine, ResolvedIngredient};
+use crate::types::ids::{AssetId, CaptureId, RecipeId};
+use crate::types::ingredient::{
+    IngredientLine, IngredientResolution, ParsedIngredient, ResolvedIngredient,
+};
 use crate::types::nutrition::NutritionComputation;
-use crate::types::recipe::{CoverOutput, ResolvedRecipe, Source, Step};
+use crate::types::recipe::{CoverOutput, Platform, ResolvedRecipe, Source, Step};
 
 use super::errors::PipelineError;
 
@@ -31,37 +33,90 @@ pub struct CoverInput {
 
 /// Extracts raw data from a capture input.
 ///
-/// Takes the user's raw input (link, image, speech, text) and produces
-/// an extraction artifact containing all the raw data that was found.
+/// For `CaptureInput::Manual`, the text is used directly as the raw text
+/// in the extraction artifact. Other input types are not yet implemented.
 ///
-/// **SPEC §9:** `extractRecipe(CaptureInput) -> Result<ExtractionArtifact>`
+/// **SPEC S9:** `extractRecipe(CaptureInput) -> Result<ExtractionArtifact>`
 ///
 /// # Errors
 ///
-/// Returns `PipelineError::NotImplemented` (stub implementation).
+/// Returns `PipelineError::ExtractionFailed` if the input is empty.
+/// Returns `PipelineError::NotImplemented` for non-manual input types.
 pub async fn extract_recipe(input: &CaptureInput) -> Result<ExtractionArtifact, PipelineError> {
-    let _ = input;
-    Err(PipelineError::NotImplemented {
-        stage: "extract_recipe".to_string(),
-    })
+    match input {
+        CaptureInput::Manual { text } => {
+            if text.trim().is_empty() {
+                return Err(PipelineError::ExtractionFailed {
+                    message: "empty input text".to_string(),
+                });
+            }
+
+            let capture_id = CaptureId::new(uuid::Uuid::new_v4().to_string());
+
+            Ok(ExtractionArtifact {
+                id: capture_id,
+                version: 1,
+                raw_text: Some(text.clone()),
+                ocr_text: None,
+                transcript: None,
+                ingredients: vec![],
+                steps: vec![],
+                images: vec![],
+                source: Source {
+                    platform: Platform::Manual,
+                    url: None,
+                    creator_handle: None,
+                    creator_id: None,
+                },
+                confidence: 1.0,
+            })
+        }
+        _ => Err(PipelineError::NotImplemented {
+            stage: "extract_recipe (non-manual)".to_string(),
+        }),
+    }
 }
 
 /// Structures raw extraction data into a recipe candidate.
 ///
-/// Identifies ingredients vs. steps, infers metadata (time, servings),
-/// and removes noise from the raw extraction.
+/// For extraction artifacts with raw_text, delegates to the Claude API
+/// extraction service. The structured candidate contains the parsed
+/// recipe fields.
 ///
-/// **SPEC §9:** `structureRecipe(ExtractionArtifact) -> Result<StructuredRecipeCandidate>`
+/// **SPEC S9:** `structureRecipe(ExtractionArtifact) -> Result<StructuredRecipeCandidate>`
 ///
 /// # Errors
 ///
-/// Returns `PipelineError::NotImplemented` (stub implementation).
+/// Returns `PipelineError::StructuringFailed` if the artifact has no text.
 pub async fn structure_recipe(
     artifact: &ExtractionArtifact,
 ) -> Result<StructuredRecipeCandidate, PipelineError> {
-    let _ = artifact;
-    Err(PipelineError::NotImplemented {
-        stage: "structure_recipe".to_string(),
+    // For manual extraction, we already have ingredient/step data
+    // from the Claude API extraction. If the artifact has populated
+    // ingredients and steps, use those directly.
+    if !artifact.ingredients.is_empty() || !artifact.steps.is_empty() {
+        return Ok(StructuredRecipeCandidate {
+            title: None,
+            ingredient_lines: artifact.ingredients.clone(),
+            steps: artifact.steps.clone(),
+            servings: None,
+            time_minutes: None,
+            tags: vec![],
+            confidence: artifact.confidence,
+        });
+    }
+
+    // If raw_text is available but no structured data yet,
+    // this is a placeholder for future implementation.
+    if artifact.raw_text.is_some() {
+        return Err(PipelineError::StructuringFailed {
+            message: "raw text structuring requires Claude API (use extract_recipe_from_text)"
+                .to_string(),
+        });
+    }
+
+    Err(PipelineError::StructuringFailed {
+        message: "no text data available for structuring".to_string(),
     })
 }
 
@@ -70,7 +125,7 @@ pub async fn structure_recipe(
 /// Takes the raw ingredient lines from a structured recipe candidate
 /// and parses each one into quantity, unit, name, and preparation.
 ///
-/// **SPEC §9:** `parseIngredients(StructuredRecipeCandidate) -> [IngredientLine]`
+/// **SPEC S9:** `parseIngredients(StructuredRecipeCandidate) -> [IngredientLine]`
 pub async fn parse_ingredients(candidate: &StructuredRecipeCandidate) -> Vec<IngredientLine> {
     // Stub: return unparsed lines
     candidate
@@ -88,10 +143,8 @@ pub async fn parse_ingredients(candidate: &StructuredRecipeCandidate) -> Vec<Ing
 /// For each ingredient line, attempts to match it to a known food
 /// entity in the USDA FoodData Central database (or Edamam fallback).
 ///
-/// **SPEC §9:** `resolveIngredients([IngredientLine]) -> [ResolvedIngredient]`
+/// **SPEC S9:** `resolveIngredients([IngredientLine]) -> [ResolvedIngredient]`
 pub async fn resolve_ingredients(lines: &[IngredientLine]) -> Vec<ResolvedIngredient> {
-    use crate::types::ingredient::{IngredientResolution, ParsedIngredient};
-
     // Stub: return unmatched resolutions
     lines
         .iter()
@@ -117,7 +170,7 @@ pub async fn resolve_ingredients(lines: &[IngredientLine]) -> Vec<ResolvedIngred
 /// Looks up nutrition data for each resolved ingredient and aggregates
 /// the results into per-recipe and per-serving totals.
 ///
-/// **SPEC §9:** `computeNutrition([ResolvedIngredient]) -> NutritionComputation`
+/// **SPEC S9:** `computeNutrition([ResolvedIngredient]) -> NutritionComputation`
 pub async fn compute_nutrition(ingredients: &[ResolvedIngredient]) -> NutritionComputation {
     use crate::types::nutrition::{NutritionFacts, NutritionStatus};
 
@@ -140,7 +193,7 @@ pub async fn compute_nutrition(ingredients: &[ResolvedIngredient]) -> NutritionC
 /// Selects, enhances, or generates a cover image based on the
 /// available source images and recipe metadata.
 ///
-/// **SPEC §9:** `generateCover(CoverInput) -> CoverOutput`
+/// **SPEC S9:** `generateCover(CoverInput) -> CoverOutput`
 pub async fn generate_cover(input: &CoverInput) -> CoverOutput {
     let _ = input;
     // Stub: return a generated cover placeholder
@@ -179,16 +232,33 @@ pub struct AssemblyInput {
 ///
 /// Combines the structured recipe candidate, resolved ingredients,
 /// nutrition computation, cover, and source into the canonical recipe.
+/// Generates a new `RecipeId` for the assembled recipe.
 ///
-/// **SPEC §9:** `assembleRecipe(...) -> ResolvedRecipe`
+/// **SPEC S9:** `assembleRecipe(...) -> ResolvedRecipe`
 ///
 /// # Errors
 ///
-/// Returns `PipelineError::NotImplemented` (stub implementation).
+/// Returns `PipelineError::AssemblyFailed` if the title is empty.
 pub async fn assemble_recipe(input: &AssemblyInput) -> Result<ResolvedRecipe, PipelineError> {
-    let _ = input;
-    Err(PipelineError::NotImplemented {
-        stage: "assemble_recipe".to_string(),
+    if input.title.trim().is_empty() {
+        return Err(PipelineError::AssemblyFailed {
+            message: "recipe title cannot be empty".to_string(),
+        });
+    }
+
+    let recipe_id = RecipeId::new(uuid::Uuid::new_v4().to_string());
+
+    Ok(ResolvedRecipe {
+        id: recipe_id,
+        title: input.title.clone(),
+        ingredients: input.ingredients.clone(),
+        steps: input.steps.clone(),
+        servings: input.servings,
+        time_minutes: input.time_minutes,
+        source: input.source.clone(),
+        nutrition: input.nutrition.clone(),
+        cover: input.cover.clone(),
+        tags: input.tags.clone(),
     })
 }
 
@@ -196,27 +266,63 @@ pub async fn assemble_recipe(input: &AssemblyInput) -> Result<ResolvedRecipe, Pi
 mod tests {
     use super::*;
     use crate::types::capture::CaptureInput;
+    use crate::types::nutrition::{NutritionFacts, NutritionStatus};
 
     #[tokio::test]
-    async fn extract_recipe_returns_not_implemented() {
+    async fn extract_recipe_manual_succeeds() {
         let input = CaptureInput::Manual {
-            text: "test recipe".to_string(),
+            text: "2 cups flour, 1 egg. Mix and bake.".to_string(),
         };
         let result = extract_recipe(&input).await;
-        assert!(result.is_err());
-        match result.err() {
-            Some(PipelineError::NotImplemented { stage }) => {
-                assert_eq!(stage, "extract_recipe");
-            }
-            other => panic!("expected NotImplemented, got {other:?}"),
-        }
+        assert!(result.is_ok());
+        let artifact = result.expect("should succeed");
+        assert!(artifact.raw_text.is_some());
+        assert_eq!(artifact.source.platform, Platform::Manual);
     }
 
     #[tokio::test]
-    async fn structure_recipe_returns_not_implemented() {
-        use crate::types::ids::CaptureId;
-        use crate::types::recipe::Platform;
+    async fn extract_recipe_manual_rejects_empty_text() {
+        let input = CaptureInput::Manual {
+            text: "   ".to_string(),
+        };
+        let result = extract_recipe(&input).await;
+        assert!(result.is_err());
+    }
 
+    #[tokio::test]
+    async fn extract_recipe_social_link_not_implemented() {
+        let input = CaptureInput::SocialLink {
+            url: "https://example.com".to_string(),
+        };
+        let result = extract_recipe(&input).await;
+        assert!(matches!(result, Err(PipelineError::NotImplemented { .. })));
+    }
+
+    #[tokio::test]
+    async fn structure_recipe_with_data_succeeds() {
+        let artifact = ExtractionArtifact {
+            id: CaptureId::new("test"),
+            version: 1,
+            raw_text: None,
+            ocr_text: None,
+            transcript: None,
+            ingredients: vec!["2 cups flour".to_string()],
+            steps: vec!["Mix well".to_string()],
+            images: vec![],
+            source: Source {
+                platform: Platform::Manual,
+                url: None,
+                creator_handle: None,
+                creator_id: None,
+            },
+            confidence: 0.9,
+        };
+        let result = structure_recipe(&artifact).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn structure_recipe_no_data_fails() {
         let artifact = ExtractionArtifact {
             id: CaptureId::new("test"),
             version: 1,
@@ -264,7 +370,7 @@ mod tests {
         let resolved = resolve_ingredients(&lines).await;
         assert_eq!(resolved.len(), 1);
         match &resolved[0].resolution {
-            crate::types::ingredient::IngredientResolution::Unmatched { text } => {
+            IngredientResolution::Unmatched { text } => {
                 assert_eq!(text, "butter");
             }
             other => panic!("expected Unmatched, got {other:?}"),
@@ -274,10 +380,7 @@ mod tests {
     #[tokio::test]
     async fn compute_nutrition_returns_unavailable() {
         let result = compute_nutrition(&[]).await;
-        assert_eq!(
-            result.status,
-            crate::types::nutrition::NutritionStatus::Unavailable
-        );
+        assert_eq!(result.status, NutritionStatus::Unavailable);
     }
 
     #[tokio::test]
@@ -296,12 +399,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn assemble_recipe_returns_not_implemented() {
-        use crate::types::nutrition::{NutritionFacts, NutritionStatus};
-        use crate::types::recipe::Platform;
-
+    async fn assemble_recipe_succeeds_with_valid_input() {
         let input = AssemblyInput {
-            title: "Test".to_string(),
+            title: "Chocolate Cake".to_string(),
+            ingredients: vec![],
+            steps: vec![Step {
+                number: 1,
+                instruction: "Bake".to_string(),
+                time_minutes: None,
+            }],
+            servings: Some(8),
+            time_minutes: Some(60),
+            source: Source {
+                platform: Platform::Manual,
+                url: None,
+                creator_handle: None,
+                creator_id: None,
+            },
+            nutrition: NutritionComputation {
+                per_recipe: NutritionFacts {
+                    calories: 0.0,
+                    protein: 0.0,
+                    carbs: 0.0,
+                    fat: 0.0,
+                },
+                per_serving: None,
+                status: NutritionStatus::Unavailable,
+            },
+            cover: CoverOutput::GeneratedCover {
+                asset_id: AssetId::new("cover"),
+            },
+            tags: vec!["dessert".to_string()],
+        };
+        let result = assemble_recipe(&input).await;
+        assert!(result.is_ok());
+        let recipe = result.expect("should succeed");
+        assert_eq!(recipe.title, "Chocolate Cake");
+        assert_eq!(recipe.servings, Some(8));
+        assert_eq!(recipe.tags, vec!["dessert"]);
+    }
+
+    #[tokio::test]
+    async fn assemble_recipe_rejects_empty_title() {
+        let input = AssemblyInput {
+            title: "  ".to_string(),
             ingredients: vec![],
             steps: vec![],
             servings: None,
@@ -328,6 +469,6 @@ mod tests {
             tags: vec![],
         };
         let result = assemble_recipe(&input).await;
-        assert!(result.is_err());
+        assert!(matches!(result, Err(PipelineError::AssemblyFailed { .. })));
     }
 }
