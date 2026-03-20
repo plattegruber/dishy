@@ -9,4 +9,6 @@ pub mod extraction;
 pub mod ingredient_parser;
 pub mod ingredient_resolver;
 pub mod nutrition;
+pub mod ocr;
+pub mod social;
 pub mod storage;

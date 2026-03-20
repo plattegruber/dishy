@@ -52,6 +52,75 @@ class RecipeRepository {
     final Map<String, Object?> json = await _apiClient.getRecipe(id);
     return ResolvedRecipe.fromJson(json.cast<String, dynamic>());
   }
+
+  /// Submits a social link for async capture.
+  ///
+  /// Returns the capture ID for polling.
+  Future<String> captureSocialLink(String url) async {
+    final Map<String, Object?> json = await _apiClient.captureSocialLink(url);
+    return json['capture_id'] as String? ?? '';
+  }
+
+  /// Submits a screenshot for async capture.
+  ///
+  /// Returns the capture ID for polling.
+  Future<String> captureScreenshot({
+    required String imageBase64,
+    required String contentType,
+  }) async {
+    final Map<String, Object?> json = await _apiClient.captureScreenshot(
+      imageBase64: imageBase64,
+      contentType: contentType,
+    );
+    return json['capture_id'] as String? ?? '';
+  }
+
+  /// Polls the status of an async capture.
+  ///
+  /// Returns a map with `status`, `recipe_id`, and `error_message`.
+  Future<CaptureStatusResult> getCaptureStatus(String captureId) async {
+    final Map<String, Object?> json =
+        await _apiClient.getCaptureStatus(captureId);
+    return CaptureStatusResult(
+      captureId: json['capture_id'] as String? ?? captureId,
+      status: json['status'] as String? ?? 'unknown',
+      recipeId: json['recipe_id'] as String?,
+      errorMessage: json['error_message'] as String?,
+    );
+  }
+}
+
+/// Result of polling a capture status endpoint.
+class CaptureStatusResult {
+  /// Creates a capture status result.
+  const CaptureStatusResult({
+    required this.captureId,
+    required this.status,
+    this.recipeId,
+    this.errorMessage,
+  });
+
+  /// The capture ID.
+  final String captureId;
+
+  /// The pipeline state: received, processing, extracted, resolved, failed.
+  final String status;
+
+  /// The produced recipe ID, if resolved.
+  final String? recipeId;
+
+  /// The error message, if failed.
+  final String? errorMessage;
+
+  /// Whether the capture is still in progress.
+  bool get isProcessing =>
+      status == 'received' || status == 'processing' || status == 'extracted';
+
+  /// Whether the capture completed successfully.
+  bool get isResolved => status == 'resolved';
+
+  /// Whether the capture failed.
+  bool get isFailed => status == 'failed';
 }
 
 /// Provides the [RecipeRepository] instance.

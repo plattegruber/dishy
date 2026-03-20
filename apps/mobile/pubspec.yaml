@@ -19,6 +19,7 @@ dependencies:
   json_annotation: ^4.9.0
   uuid: ^4.5.1
   clerk_flutter: ^0.0.14-beta
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:
