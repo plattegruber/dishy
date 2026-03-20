@@ -80,15 +80,17 @@ curl http://localhost:8787/health
 |--------|------|------|-------------|
 | GET | `/health` | No | Health check -- returns `{"status":"ok","version":"..."}` |
 | GET | `/me` | Yes | Returns authenticated user's claims from the JWT |
-| POST | `/recipes/capture` | Yes | Capture recipe from text via Claude extraction |
+| POST | `/recipes/capture` | Yes | Capture recipe (manual/social_link/screenshot) |
+| GET | `/captures/:id` | Yes | Poll capture status for async captures |
 | GET | `/recipes` | Yes | List all recipes for the authenticated user |
 | GET | `/recipes/:id` | Yes | Get a single recipe by ID |
 | GET | `/recipes/:id/nutrition` | Yes | Detailed nutrition breakdown per ingredient |
 
 ### Recipe Capture
 
-The capture endpoint accepts manual text input and runs the full extraction pipeline:
+The capture endpoint supports three input types:
 
+**Manual text (synchronous, returns 201):**
 ```bash
 curl -X POST http://localhost:8787/recipes/capture \
   -H "Authorization: Bearer <token>" \
@@ -96,7 +98,30 @@ curl -X POST http://localhost:8787/recipes/capture \
   -d '{"input_type": "manual", "text": "Chocolate Cake\n\nIngredients:\n2 cups flour\n1 cup sugar\n\nSteps:\n1. Preheat oven\n2. Mix and bake"}'
 ```
 
-The pipeline stages:
+**Social link (async via Cloudflare Queues, returns 202):**
+```bash
+curl -X POST http://localhost:8787/recipes/capture \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"input_type": "social_link", "url": "https://www.instagram.com/p/abc123"}'
+```
+
+**Screenshot (async via Cloudflare Queues, returns 202):**
+```bash
+curl -X POST http://localhost:8787/recipes/capture \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"input_type": "screenshot", "image_data": "<base64-encoded-image>"}'
+```
+
+**Poll async capture status:**
+```bash
+curl http://localhost:8787/captures/<capture-id> \
+  -H "Authorization: Bearer <token>"
+# -> {"capture_id":"...","pipeline_state":"processing","recipe_id":null,"error_message":null}
+```
+
+The pipeline stages (manual):
 1. Save capture input to D1
 2. Call Claude API with tool_use for structured extraction
 3. Parse ingredients via Claude API (tool_use for structured parsing)
@@ -105,6 +130,12 @@ The pipeline stages:
 6. Generate cover (stub)
 7. Assemble and save recipe to D1
 8. Return the saved `ResolvedRecipe`
+
+The async pipeline (social_link, screenshot) adds:
+- Queue the capture job on Cloudflare Queues (returns 202 immediately)
+- Queue consumer fetches page content or runs Claude Vision OCR
+- Extracted text feeds into the same Claude structuring pipeline
+- State machine: Received -> Processing -> Extracted -> Resolved (or Failed)
 
 **Required secrets:**
 ```bash
@@ -269,3 +300,4 @@ See [ADR-002: Observability](docs/adr/002-observability.md) for the full design 
 - [ADR-004: Domain Model](docs/adr/004-domain-model.md)
 - [ADR-005: Capture Pipeline](docs/adr/005-capture-pipeline.md)
 - [ADR-006: Ingredient & Nutrition Pipeline](docs/adr/006-ingredient-nutrition-pipeline.md)
+- [ADR-008: AI-Powered Extraction](docs/adr/008-ai-extraction.md)

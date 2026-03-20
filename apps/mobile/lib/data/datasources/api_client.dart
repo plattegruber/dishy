@@ -240,4 +240,51 @@ class ApiClient {
         await _dio.get<Map<String, Object?>>('/recipes/$id/nutrition');
     return response.data ?? <String, Object?>{};
   }
+
+  /// Captures a recipe from a social media URL via the async pipeline.
+  ///
+  /// Calls `POST /recipes/capture` with `input_type: "social_link"`.
+  /// Returns 202 Accepted with capture ID for polling.
+  /// Throws a [DioException] on failure.
+  Future<Map<String, Object?>> captureSocialLink(String url) async {
+    final Response<Map<String, Object?>> response =
+        await _dio.post<Map<String, Object?>>(
+      '/recipes/capture',
+      data: <String, String>{
+        'input_type': 'social_link',
+        'url': url,
+      },
+    );
+    return response.data ?? <String, Object?>{};
+  }
+
+  /// Captures a recipe from a screenshot via the async pipeline.
+  ///
+  /// Calls `POST /recipes/capture` with `input_type: "screenshot"` and
+  /// the base64-encoded image data.
+  /// Returns 202 Accepted with capture ID for polling.
+  /// Throws a [DioException] on failure.
+  Future<Map<String, Object?>> captureScreenshot(String base64ImageData) async {
+    final Response<Map<String, Object?>> response =
+        await _dio.post<Map<String, Object?>>(
+      '/recipes/capture',
+      data: <String, String>{
+        'input_type': 'screenshot',
+        'image_data': base64ImageData,
+      },
+    );
+    return response.data ?? <String, Object?>{};
+  }
+
+  /// Polls the capture status for an async capture.
+  ///
+  /// Calls `GET /captures/:id` and returns the status JSON map
+  /// containing `pipeline_state`, optional `recipe_id`, and
+  /// optional `error_message`.
+  /// Throws a [DioException] on failure (including 404 if not found).
+  Future<Map<String, Object?>> getCaptureStatus(String captureId) async {
+    final Response<Map<String, Object?>> response =
+        await _dio.get<Map<String, Object?>>('/captures/$captureId');
+    return response.data ?? <String, Object?>{};
+  }
 }

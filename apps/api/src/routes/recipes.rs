@@ -1,9 +1,16 @@
 //! Recipe capture and retrieval route handlers.
 //!
-//! Implements the three recipe endpoints:
-//! - `POST /recipes/capture` -- manual text capture with Claude extraction
+//! Implements the recipe endpoints:
+//! - `POST /recipes/capture` -- capture with support for manual (sync),
+//!   social_link (async), and screenshot (async) input types
+//! - `GET /captures/:id` -- poll capture status for async captures
 //! - `GET /recipes` -- list all recipes for the authenticated user
 //! - `GET /recipes/:id` -- get a single recipe by ID
+//! - `GET /recipes/:id/nutrition` -- nutrition breakdown for a recipe
+//!
+//! Manual captures are processed synchronously and return the recipe.
+//! Social link and screenshot captures are queued via Cloudflare Queues
+//! and return 202 Accepted with a capture ID for polling.
 //!
 //! All endpoints require authentication via Clerk JWT.
 
@@ -13,14 +20,26 @@ use std::collections::HashMap;
 #[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
 
-/// Request body for the manual capture endpoint.
+/// Request body for the capture endpoint.
+///
+/// Supports three input types:
+/// - `"manual"` -- synchronous: requires `text` field
+/// - `"social_link"` -- async: requires `url` field
+/// - `"screenshot"` -- async: requires `image_data` field (base64)
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug, Deserialize)]
 pub struct CaptureRequest {
-    /// The type of input (only "manual" is supported in Phase 4).
+    /// The type of input: "manual", "social_link", or "screenshot".
     pub input_type: String,
-    /// The raw recipe text to extract from.
+    /// The raw recipe text (required for "manual").
+    #[serde(default)]
     pub text: String,
+    /// The URL to capture (required for "social_link").
+    #[serde(default)]
+    pub url: String,
+    /// The base64-encoded image data (required for "screenshot").
+    #[serde(default)]
+    pub image_data: String,
 }
 
 /// Error response body for recipe endpoints.
@@ -140,24 +159,52 @@ pub async fn handle_capture(
         }
     };
 
-    // Validate input type
-    if capture_req.input_type != "manual" {
-        flush_logs(&request_ctx, &ctx).await;
-        let mut resp = error_response(
-            "unsupported_input_type",
-            &format!(
-                "Unsupported input type: {}. Only 'manual' is supported.",
-                capture_req.input_type
-            ),
-            400,
-        )?;
-        attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
-        return Ok(resp);
+    // Route by input type
+    match capture_req.input_type.as_str() {
+        "manual" => handle_manual_capture(&capture_req, &user_id, &request_ctx, &ctx).await,
+        "social_link" | "screenshot" => {
+            handle_async_capture(&capture_req, &user_id, &request_ctx, &ctx).await
+        }
+        other => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = error_response(
+                "unsupported_input_type",
+                &format!(
+                    "Unsupported input type: {other}. Supported: 'manual', 'social_link', 'screenshot'."
+                ),
+                400,
+            )?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            Ok(resp)
+        }
     }
+}
+
+/// Handles synchronous manual text capture.
+///
+/// Processes the text through the Claude extraction pipeline immediately
+/// and returns 201 Created with the resolved recipe.
+#[cfg(target_arch = "wasm32")]
+async fn handle_manual_capture(
+    capture_req: &CaptureRequest,
+    user_id: &crate::types::ids::UserId,
+    request_ctx: &crate::middleware::RequestContext,
+    ctx: &worker::RouteContext<()>,
+) -> worker::Result<worker::Response> {
+    use crate::db::queries;
+    use crate::middleware::attach_correlation_header;
+    use crate::pipeline::contracts::{
+        assemble_recipe, compute_nutrition, generate_cover, parse_ingredients, resolve_ingredients,
+        AssemblyInput, CoverInput,
+    };
+    use crate::services::extraction::extract_recipe_from_text;
+    use crate::types::capture::CaptureInput;
+    use crate::types::ids::CaptureId;
+    use crate::types::recipe::{Platform, Source, Step};
 
     // Validate text is not empty
     if capture_req.text.trim().is_empty() {
-        flush_logs(&request_ctx, &ctx).await;
+        flush_logs(request_ctx, ctx).await;
         let mut resp = error_response("empty_text", "Recipe text cannot be empty", 400)?;
         attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
         return Ok(resp);
@@ -189,8 +236,7 @@ pub async fn handle_capture(
         ]),
     );
 
-    if let Err(e) = queries::insert_capture_input(&db, &capture_id, &user_id, &capture_input).await
-    {
+    if let Err(e) = queries::insert_capture_input(&db, &capture_id, user_id, &capture_input).await {
         request_ctx.logger.error(
             "Failed to save capture input",
             HashMap::from([(
@@ -198,7 +244,7 @@ pub async fn handle_capture(
                 serde_json::Value::String(e.to_string()),
             )]),
         );
-        flush_logs(&request_ctx, &ctx).await;
+        flush_logs(request_ctx, ctx).await;
         let mut resp = error_response("db_error", &format!("Failed to save capture: {e}"), 500)?;
         attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
         return Ok(resp);
@@ -214,7 +260,7 @@ pub async fn handle_capture(
         request_ctx
             .logger
             .error("ANTHROPIC_API_KEY not configured", HashMap::new());
-        flush_logs(&request_ctx, &ctx).await;
+        flush_logs(request_ctx, ctx).await;
         let mut resp = error_response("config_error", "ANTHROPIC_API_KEY is not configured", 500)?;
         attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
         return Ok(resp);
@@ -246,7 +292,7 @@ pub async fn handle_capture(
                         ),
                     ]),
                 );
-                flush_logs(&request_ctx, &ctx).await;
+                flush_logs(request_ctx, ctx).await;
                 let mut resp = error_response(
                     "extraction_failed",
                     &format!("Recipe extraction failed: {e}"),
@@ -343,7 +389,7 @@ pub async fn handle_capture(
                     serde_json::Value::String(e.to_string()),
                 )]),
             );
-            flush_logs(&request_ctx, &ctx).await;
+            flush_logs(request_ctx, ctx).await;
             let mut resp = error_response(
                 "assembly_failed",
                 &format!("Recipe assembly failed: {e}"),
@@ -369,7 +415,7 @@ pub async fn handle_capture(
         ]),
     );
 
-    if let Err(e) = queries::insert_recipe(&db, &recipe, &user_id, Some(&capture_id)).await {
+    if let Err(e) = queries::insert_recipe(&db, &recipe, user_id, Some(&capture_id)).await {
         request_ctx.logger.error(
             "Failed to save recipe",
             HashMap::from([(
@@ -377,7 +423,7 @@ pub async fn handle_capture(
                 serde_json::Value::String(e.to_string()),
             )]),
         );
-        flush_logs(&request_ctx, &ctx).await;
+        flush_logs(request_ctx, ctx).await;
         let mut resp = error_response("db_error", &format!("Failed to save recipe: {e}"), 500)?;
         attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
         return Ok(resp);
@@ -397,7 +443,7 @@ pub async fn handle_capture(
         ]),
     );
 
-    flush_logs(&request_ctx, &ctx).await;
+    flush_logs(request_ctx, ctx).await;
 
     let json =
         serde_json::to_string(&recipe).map_err(|e| worker::Error::RustError(e.to_string()))?;
@@ -407,6 +453,183 @@ pub async fn handle_capture(
     attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
     // Return 201 Created
     Ok(resp.with_status(201))
+}
+
+/// Handles async capture for social links and screenshots.
+///
+/// Validates the input, saves the capture record, enqueues a `CaptureJob`
+/// on the Cloudflare Queue, and returns 202 Accepted with the capture ID.
+/// The queue consumer processes the capture asynchronously.
+#[cfg(target_arch = "wasm32")]
+async fn handle_async_capture(
+    capture_req: &CaptureRequest,
+    user_id: &crate::types::ids::UserId,
+    request_ctx: &crate::middleware::RequestContext,
+    ctx: &worker::RouteContext<()>,
+) -> worker::Result<worker::Response> {
+    use crate::db::queries;
+    use crate::middleware::attach_correlation_header;
+    use crate::pipeline::queue::{AsyncCaptureResponse, CaptureJob};
+    use crate::services::social;
+    use crate::types::capture::CaptureInput;
+    use crate::types::ids::{AssetId, CaptureId};
+
+    // Validate input based on type
+    let (capture_input, payload) = match capture_req.input_type.as_str() {
+        "social_link" => {
+            if capture_req.url.trim().is_empty() {
+                flush_logs(request_ctx, ctx).await;
+                let mut resp = error_response(
+                    "empty_url",
+                    "URL cannot be empty for social_link capture",
+                    400,
+                )?;
+                attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+                return Ok(resp);
+            }
+            if let Err(e) = social::validate_url(&capture_req.url) {
+                flush_logs(request_ctx, ctx).await;
+                let mut resp = error_response("invalid_url", &format!("Invalid URL: {e}"), 400)?;
+                attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+                return Ok(resp);
+            }
+            let input = CaptureInput::SocialLink {
+                url: capture_req.url.clone(),
+            };
+            (input, capture_req.url.clone())
+        }
+        "screenshot" => {
+            if capture_req.image_data.trim().is_empty() {
+                flush_logs(request_ctx, ctx).await;
+                let mut resp = error_response(
+                    "empty_image",
+                    "image_data cannot be empty for screenshot capture",
+                    400,
+                )?;
+                attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+                return Ok(resp);
+            }
+            // Validate base64 is decodable
+            if base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                &capture_req.image_data,
+            )
+            .is_err()
+            {
+                flush_logs(request_ctx, ctx).await;
+                let mut resp =
+                    error_response("invalid_image", "image_data is not valid base64", 400)?;
+                attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+                return Ok(resp);
+            }
+            let input = CaptureInput::Screenshot {
+                image: AssetId::new("pending_upload"),
+            };
+            (input, capture_req.image_data.clone())
+        }
+        _ => {
+            flush_logs(request_ctx, ctx).await;
+            let mut resp = error_response(
+                "unsupported_input_type",
+                "Only social_link and screenshot are supported for async capture",
+                400,
+            )?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    let db = ctx
+        .env
+        .d1("DB")
+        .map_err(|e| worker::Error::RustError(format!("failed to get D1 binding: {e}")))?;
+
+    let capture_id = CaptureId::new(uuid::Uuid::new_v4().to_string());
+
+    request_ctx.logger.info(
+        "Saving async capture input",
+        HashMap::from([
+            (
+                "stage".to_string(),
+                serde_json::Value::String("async_capture".to_string()),
+            ),
+            (
+                "capture_id".to_string(),
+                serde_json::Value::String(capture_id.as_str().to_string()),
+            ),
+            (
+                "input_type".to_string(),
+                serde_json::Value::String(capture_req.input_type.clone()),
+            ),
+        ]),
+    );
+
+    // Save capture input to D1
+    if let Err(e) = queries::insert_capture_input(&db, &capture_id, user_id, &capture_input).await {
+        request_ctx.logger.error(
+            "Failed to save async capture input",
+            HashMap::from([(
+                "error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            )]),
+        );
+        flush_logs(request_ctx, ctx).await;
+        let mut resp = error_response("db_error", &format!("Failed to save capture: {e}"), 500)?;
+        attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+        return Ok(resp);
+    }
+
+    // Enqueue the capture job
+    let job = CaptureJob {
+        capture_id: capture_id.as_str().to_string(),
+        user_id: user_id.as_str().to_string(),
+        input_type: capture_req.input_type.clone(),
+        payload,
+    };
+
+    let queue = ctx
+        .env
+        .queue("CAPTURE_QUEUE")
+        .map_err(|e| worker::Error::RustError(format!("failed to get queue binding: {e}")))?;
+
+    let job_json =
+        serde_json::to_value(&job).map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+    queue
+        .send(job_json)
+        .await
+        .map_err(|e| worker::Error::RustError(format!("failed to enqueue capture job: {e}")))?;
+
+    request_ctx.logger.info(
+        "Capture job enqueued",
+        HashMap::from([
+            (
+                "capture_id".to_string(),
+                serde_json::Value::String(capture_id.as_str().to_string()),
+            ),
+            (
+                "queue".to_string(),
+                serde_json::Value::String("dishy-capture-queue".to_string()),
+            ),
+        ]),
+    );
+
+    flush_logs(request_ctx, ctx).await;
+
+    let response_body = AsyncCaptureResponse {
+        capture_id: capture_id.as_str().to_string(),
+        status: "queued".to_string(),
+        pipeline_state: "received".to_string(),
+    };
+
+    let json = serde_json::to_string(&response_body)
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+    let mut resp = worker::Response::ok(json)?;
+    let _ = resp.headers_mut().set("Content-Type", "application/json");
+    attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+    // Return 202 Accepted for async captures
+    Ok(resp.with_status(202))
 }
 
 /// Handles `GET /recipes` -- list all recipes for the authenticated user.
@@ -806,6 +1029,125 @@ async fn flush_logs(
     }
 }
 
+/// Handles `GET /captures/:id` -- poll capture status.
+///
+/// Returns the current pipeline state of an async capture. Once the
+/// capture reaches `resolved` state, the `recipe_id` field contains
+/// the ID of the assembled recipe.
+///
+/// # Authentication
+///
+/// Requires a valid Clerk JWT in the `Authorization` header.
+/// Returns 404 if the capture doesn't belong to the authenticated user.
+#[cfg(target_arch = "wasm32")]
+pub async fn handle_get_capture_status(
+    req: worker::Request,
+    ctx: worker::RouteContext<()>,
+) -> worker::Result<worker::Response> {
+    use crate::middleware::{
+        attach_correlation_header, authenticate_request, extract_request_context,
+    };
+    use crate::pipeline::queue::CaptureStatusResponse;
+    use crate::types::ids::UserId;
+    use worker::wasm_bindgen::JsValue;
+
+    let request_ctx = extract_request_context(&req);
+
+    let capture_id = match ctx.param("id") {
+        Some(id) => id.to_string(),
+        None => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = error_response("missing_id", "Capture ID is required", 400)?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    request_ctx.logger.info(
+        "Capture status requested",
+        HashMap::from([(
+            "capture_id".to_string(),
+            serde_json::Value::String(capture_id.clone()),
+        )]),
+    );
+
+    // Authenticate
+    let jwks_url = ctx
+        .var("CLERK_JWKS_URL")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| "https://api.clerk.com/v1/jwks".to_string());
+
+    let claims = match authenticate_request(&req, &request_ctx, &jwks_url).await {
+        Ok(claims) => claims,
+        Err(auth_error) => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = auth_error.to_response()?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    let user_id = UserId::new(&claims.sub);
+
+    let db = ctx
+        .env
+        .d1("DB")
+        .map_err(|e| worker::Error::RustError(format!("failed to get D1 binding: {e}")))?;
+
+    // Query the capture_inputs table
+    let statement = db.prepare(
+        "SELECT id, pipeline_state, recipe_id, error_message FROM capture_inputs WHERE id = ?1 AND user_id = ?2"
+    );
+
+    let result = statement
+        .bind(&[
+            JsValue::from_str(&capture_id),
+            JsValue::from_str(user_id.as_str()),
+        ])
+        .map_err(|e| worker::Error::RustError(format!("bind failed: {e}")))?
+        .all()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("query failed: {e}")))?;
+
+    let rows = result
+        .results::<serde_json::Value>()
+        .map_err(|e| worker::Error::RustError(format!("results parse failed: {e}")))?;
+
+    let row = match rows.into_iter().next() {
+        Some(r) => r,
+        None => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = error_response("not_found", "Capture not found", 404)?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    let pipeline_state = row["pipeline_state"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+    let recipe_id = row["recipe_id"].as_str().map(|s| s.to_string());
+    let error_message = row["error_message"].as_str().map(|s| s.to_string());
+
+    let status_response = CaptureStatusResponse {
+        capture_id,
+        pipeline_state,
+        recipe_id,
+        error_message,
+    };
+
+    flush_logs(&request_ctx, &ctx).await;
+
+    let json = serde_json::to_string(&status_response)
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+    let mut resp = worker::Response::ok(json)?;
+    let _ = resp.headers_mut().set("Content-Type", "application/json");
+    attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+    Ok(resp)
+}
+
 // Non-WASM stubs for compilation on the host target (used in `cargo test`).
 // The Worker runtime (Router, D1, Fetch) is not available outside wasm32,
 // so these stubs allow the crate to compile and run unit tests on the host.
@@ -813,6 +1155,16 @@ async fn flush_logs(
 /// Stub for `handle_capture` on non-WASM targets.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn handle_capture(
+    req: worker::Request,
+    ctx: worker::RouteContext<()>,
+) -> worker::Result<worker::Response> {
+    let _ = (req, ctx);
+    worker::Response::error("Not available outside WASM runtime", 501)
+}
+
+/// Stub for `handle_get_capture_status` on non-WASM targets.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn handle_get_capture_status(
     req: worker::Request,
     ctx: worker::RouteContext<()>,
 ) -> worker::Result<worker::Response> {

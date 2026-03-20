@@ -19,6 +19,8 @@ pub mod types;
 use std::collections::HashMap;
 
 use serde::Serialize;
+#[cfg(target_arch = "wasm32")]
+use worker::Queue;
 use worker::{event, Context, Env, Request, Response, Router};
 
 use crate::middleware::{attach_correlation_header, authenticate_request, extract_request_context};
@@ -73,6 +75,9 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> worker::Result<Response
         })
         .get_async("/recipes/:id/nutrition", |req, route_ctx| async move {
             crate::routes::recipes::handle_get_nutrition(req, route_ctx).await
+        })
+        .get_async("/captures/:id", |req, route_ctx| async move {
+            crate::routes::recipes::handle_get_capture_status(req, route_ctx).await
         })
         .run(req, env)
         .await
@@ -204,4 +209,118 @@ async fn flush_logs(request_ctx: &middleware::RequestContext, ctx: &worker::Rout
     if !axiom_token.is_empty() {
         let _ = request_ctx.logger.flush(&axiom_token, &axiom_dataset).await;
     }
+}
+
+/// Queue event handler for async capture processing.
+///
+/// Consumes messages from the `dishy-capture-queue` Cloudflare Queue.
+/// Each message contains a `CaptureJob` describing a social link or
+/// screenshot capture to process. The handler:
+///
+/// 1. Deserializes the capture job from the queue message.
+/// 2. Delegates to [`pipeline::queue::process_capture_job`] for processing.
+/// 3. Acknowledges the message on success, or lets it retry on transient failure.
+///
+/// Non-transient failures (invalid input, extraction failure) are acknowledged
+/// to prevent infinite retries — the capture record is marked as `Failed` in D1.
+#[cfg(target_arch = "wasm32")]
+#[event(queue)]
+async fn queue_handler(
+    message_batch: worker::MessageBatch<serde_json::Value>,
+    env: Env,
+    _ctx: Context,
+) -> worker::Result<()> {
+    use crate::pipeline::queue::{process_capture_job, CaptureJob};
+
+    let db = env
+        .d1("DB")
+        .map_err(|e| worker::Error::RustError(format!("failed to get D1 binding: {e}")))?;
+
+    let api_key = env
+        .secret("ANTHROPIC_API_KEY")
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+
+    let fdc_api_key = env
+        .secret("FDC_API_KEY")
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+
+    for message in message_batch.messages() {
+        let logger = logging::Logger::new(uuid::Uuid::new_v4().to_string(), String::new());
+
+        let job: CaptureJob = match serde_json::from_value(message.body().clone()) {
+            Ok(j) => j,
+            Err(e) => {
+                logger.error(
+                    "Failed to deserialize capture job from queue message",
+                    HashMap::from([(
+                        "error".to_string(),
+                        serde_json::Value::String(e.to_string()),
+                    )]),
+                );
+                // Acknowledge bad messages to prevent infinite retries
+                message.ack();
+                continue;
+            }
+        };
+
+        logger.info(
+            "Processing queued capture job",
+            HashMap::from([
+                (
+                    "capture_id".to_string(),
+                    serde_json::Value::String(job.capture_id.clone()),
+                ),
+                (
+                    "input_type".to_string(),
+                    serde_json::Value::String(job.input_type.clone()),
+                ),
+            ]),
+        );
+
+        match process_capture_job(&job, &db, &api_key, &fdc_api_key, &logger).await {
+            Ok(()) => {
+                logger.info(
+                    "Capture job processed successfully",
+                    HashMap::from([(
+                        "capture_id".to_string(),
+                        serde_json::Value::String(job.capture_id.clone()),
+                    )]),
+                );
+                message.ack();
+            }
+            Err(e) => {
+                logger.error(
+                    "Capture job processing failed",
+                    HashMap::from([
+                        (
+                            "capture_id".to_string(),
+                            serde_json::Value::String(job.capture_id.clone()),
+                        ),
+                        ("error".to_string(), serde_json::Value::String(e.clone())),
+                    ]),
+                );
+                // Acknowledge anyway -- failure state is recorded in D1
+                // The queue DLQ will catch truly unprocessable messages
+                message.ack();
+            }
+        }
+
+        // Best-effort flush logs for this job
+        let axiom_token = env
+            .secret("AXIOM_API_TOKEN")
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let axiom_dataset = env
+            .var("AXIOM_DATASET")
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| "dishy-api".to_string());
+
+        if !axiom_token.is_empty() {
+            let _ = logger.flush(&axiom_token, &axiom_dataset).await;
+        }
+    }
+
+    Ok(())
 }

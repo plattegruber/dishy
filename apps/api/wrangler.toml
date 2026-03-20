@@ -34,3 +34,16 @@ binding = "DB"
 database_name = "dishy-db"
 database_id = "placeholder-replace-after-d1-create"
 migrations_dir = "src/db/migrations"
+
+# Cloudflare Queues for async capture processing (social links, screenshots).
+# Create with: npx wrangler queues create dishy-capture-queue
+[[queues.producers]]
+queue = "dishy-capture-queue"
+binding = "CAPTURE_QUEUE"
+
+[[queues.consumers]]
+queue = "dishy-capture-queue"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "dishy-capture-dlq"

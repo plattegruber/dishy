@@ -77,8 +77,56 @@ pub async fn extract_recipe(input: &CaptureInput) -> Result<ExtractionArtifact, 
                 confidence: 1.0,
             })
         }
+        CaptureInput::SocialLink { url } => {
+            if url.trim().is_empty() {
+                return Err(PipelineError::ExtractionFailed {
+                    message: "empty URL".to_string(),
+                });
+            }
+
+            let capture_id = CaptureId::new(uuid::Uuid::new_v4().to_string());
+
+            Ok(ExtractionArtifact {
+                id: capture_id,
+                version: 1,
+                raw_text: None,
+                ocr_text: None,
+                transcript: None,
+                ingredients: vec![],
+                steps: vec![],
+                images: vec![],
+                source: Source {
+                    platform: crate::services::social::detect_platform(url),
+                    url: Some(url.clone()),
+                    creator_handle: None,
+                    creator_id: None,
+                },
+                confidence: 0.0, // Will be updated after fetch
+            })
+        }
+        CaptureInput::Screenshot { .. } => {
+            let capture_id = CaptureId::new(uuid::Uuid::new_v4().to_string());
+
+            Ok(ExtractionArtifact {
+                id: capture_id,
+                version: 1,
+                raw_text: None,
+                ocr_text: None,
+                transcript: None,
+                ingredients: vec![],
+                steps: vec![],
+                images: vec![],
+                source: Source {
+                    platform: Platform::Manual,
+                    url: None,
+                    creator_handle: None,
+                    creator_id: None,
+                },
+                confidence: 0.0, // Will be updated after OCR
+            })
+        }
         _ => Err(PipelineError::NotImplemented {
-            stage: "extract_recipe (non-manual)".to_string(),
+            stage: "extract_recipe (speech/scan)".to_string(),
         }),
     }
 }
@@ -376,12 +424,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn extract_recipe_social_link_not_implemented() {
+    async fn extract_recipe_social_link_creates_artifact() {
         let input = CaptureInput::SocialLink {
-            url: "https://example.com".to_string(),
+            url: "https://www.instagram.com/p/abc123".to_string(),
         };
         let result = extract_recipe(&input).await;
-        assert!(matches!(result, Err(PipelineError::NotImplemented { .. })));
+        assert!(result.is_ok());
+        let artifact = result.expect("should succeed");
+        assert_eq!(artifact.source.platform, Platform::Instagram);
+        assert_eq!(
+            artifact.source.url.as_deref(),
+            Some("https://www.instagram.com/p/abc123")
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_recipe_social_link_rejects_empty_url() {
+        let input = CaptureInput::SocialLink {
+            url: "  ".to_string(),
+        };
+        let result = extract_recipe(&input).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn extract_recipe_screenshot_creates_artifact() {
+        use crate::types::ids::AssetId;
+        let input = CaptureInput::Screenshot {
+            image: AssetId::new("test_image"),
+        };
+        let result = extract_recipe(&input).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
