@@ -52,10 +52,10 @@ pub enum DbError {
 ///
 /// # Arguments
 ///
-/// * `db` — D1 database binding.
-/// * `id` — The capture ID.
-/// * `user_id` — The user who created the capture.
-/// * `input` — The capture input data.
+/// * `db` -- D1 database binding.
+/// * `id` -- The capture ID.
+/// * `user_id` -- The user who created the capture.
+/// * `input` -- The capture input data.
 ///
 /// # Errors
 ///
@@ -108,9 +108,9 @@ pub async fn insert_capture_input(
 ///
 /// # Arguments
 ///
-/// * `db` — D1 database binding.
-/// * `artifact_id` — Unique ID for this artifact.
-/// * `artifact` — The extraction artifact data.
+/// * `db` -- D1 database binding.
+/// * `artifact_id` -- Unique ID for this artifact.
+/// * `artifact` -- The extraction artifact data.
 ///
 /// # Errors
 ///
@@ -177,12 +177,15 @@ pub async fn insert_extraction_artifact(
 /// Inserts a resolved recipe with its ingredients and steps.
 ///
 /// This is a multi-statement operation that inserts the recipe row,
-/// all ingredient rows, and all step rows.
+/// all ingredient rows, and all step rows. Also associates the recipe
+/// with the capturing user.
 ///
 /// # Arguments
 ///
-/// * `db` — D1 database binding.
-/// * `recipe` — The fully resolved recipe to persist.
+/// * `db` -- D1 database binding.
+/// * `recipe` -- The fully resolved recipe to persist.
+/// * `user_id` -- The user who owns this recipe.
+/// * `capture_id` -- Optional capture ID linking this recipe to its source input.
 ///
 /// # Errors
 ///
@@ -191,6 +194,8 @@ pub async fn insert_extraction_artifact(
 pub async fn insert_recipe(
     db: &worker::d1::D1Database,
     recipe: &ResolvedRecipe,
+    user_id: &UserId,
+    capture_id: Option<&CaptureId>,
 ) -> Result<(), DbError> {
     use worker::wasm_bindgen::JsValue;
 
@@ -213,15 +218,21 @@ pub async fn insert_recipe(
         Some(t) => JsValue::from_f64(f64::from(t)),
         None => JsValue::null(),
     };
+    let capture_id_val = match capture_id {
+        Some(cid) => JsValue::from_str(cid.as_str()),
+        None => JsValue::null(),
+    };
 
     // Insert the recipe row
     let recipe_stmt = db.prepare(
-        "INSERT INTO recipes (id, title, servings, time_minutes, source_json, nutrition_json, cover_json, tags_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"
+        "INSERT INTO recipes (id, capture_id, user_id, title, servings, time_minutes, source_json, nutrition_json, cover_json, tags_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
     );
 
     recipe_stmt
         .bind(&[
             JsValue::from_str(recipe.id.as_str()),
+            capture_id_val,
+            JsValue::from_str(user_id.as_str()),
             JsValue::from_str(&recipe.title),
             servings_val,
             time_val,
@@ -293,12 +304,237 @@ pub async fn insert_recipe(
     Ok(())
 }
 
+/// Retrieves all recipes for a given user.
+///
+/// Returns a list of `ResolvedRecipe` objects for the authenticated user,
+/// ordered by creation date (newest first). Ingredients and steps are
+/// fetched separately for each recipe.
+///
+/// # Arguments
+///
+/// * `db` -- D1 database binding.
+/// * `user_id` -- The user whose recipes to retrieve.
+///
+/// # Errors
+///
+/// Returns `DbError::QueryFailed` on query failure.
+#[cfg(target_arch = "wasm32")]
+pub async fn get_recipes_by_user(
+    db: &worker::d1::D1Database,
+    user_id: &UserId,
+) -> Result<Vec<ResolvedRecipe>, DbError> {
+    use worker::wasm_bindgen::JsValue;
+
+    let statement =
+        db.prepare("SELECT id, title, servings, time_minutes, source_json, nutrition_json, cover_json, tags_json FROM recipes WHERE user_id = ?1 ORDER BY created_at DESC");
+
+    let result = statement
+        .bind(&[JsValue::from_str(user_id.as_str())])
+        .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
+        .all()
+        .await
+        .map_err(|e| DbError::QueryFailed(format!("query failed: {e}")))?;
+
+    let rows = result
+        .results::<serde_json::Value>()
+        .map_err(|e| DbError::QueryFailed(format!("results parse failed: {e}")))?;
+
+    let mut recipes = Vec::with_capacity(rows.len());
+    for row in rows {
+        let recipe = row_to_recipe(db, &row).await?;
+        recipes.push(recipe);
+    }
+
+    Ok(recipes)
+}
+
+/// Retrieves a single recipe by ID, verifying it belongs to the given user.
+///
+/// # Arguments
+///
+/// * `db` -- D1 database binding.
+/// * `recipe_id` -- The recipe ID to look up.
+/// * `user_id` -- The user who must own the recipe.
+///
+/// # Errors
+///
+/// Returns `DbError::NotFound` if the recipe doesn't exist or doesn't
+/// belong to the user. Returns `DbError::QueryFailed` on query failure.
+#[cfg(target_arch = "wasm32")]
+pub async fn get_recipe_by_id(
+    db: &worker::d1::D1Database,
+    recipe_id: &str,
+    user_id: &UserId,
+) -> Result<ResolvedRecipe, DbError> {
+    use worker::wasm_bindgen::JsValue;
+
+    let statement = db.prepare(
+        "SELECT id, title, servings, time_minutes, source_json, nutrition_json, cover_json, tags_json FROM recipes WHERE id = ?1 AND user_id = ?2"
+    );
+
+    let result = statement
+        .bind(&[
+            JsValue::from_str(recipe_id),
+            JsValue::from_str(user_id.as_str()),
+        ])
+        .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
+        .all()
+        .await
+        .map_err(|e| DbError::QueryFailed(format!("query failed: {e}")))?;
+
+    let rows = result
+        .results::<serde_json::Value>()
+        .map_err(|e| DbError::QueryFailed(format!("results parse failed: {e}")))?;
+
+    let row = rows.into_iter().next().ok_or_else(|| DbError::NotFound {
+        entity: "recipe".to_string(),
+        id: recipe_id.to_string(),
+    })?;
+
+    row_to_recipe(db, &row).await
+}
+
+/// Converts a recipe row from D1 into a `ResolvedRecipe`, fetching
+/// ingredients and steps as separate queries.
+#[cfg(target_arch = "wasm32")]
+async fn row_to_recipe(
+    db: &worker::d1::D1Database,
+    row: &serde_json::Value,
+) -> Result<ResolvedRecipe, DbError> {
+    use crate::types::ids::RecipeId;
+    use crate::types::ingredient::{IngredientResolution, ParsedIngredient, ResolvedIngredient};
+    use crate::types::nutrition::NutritionComputation;
+    use crate::types::recipe::{CoverOutput, Source, Step};
+    use worker::wasm_bindgen::JsValue;
+
+    let recipe_id = row["id"]
+        .as_str()
+        .ok_or_else(|| DbError::QueryFailed("missing id column".to_string()))?;
+
+    let title = row["title"]
+        .as_str()
+        .ok_or_else(|| DbError::QueryFailed("missing title column".to_string()))?
+        .to_string();
+
+    let servings = row["servings"].as_i64().map(|v| v as i32);
+    let time_minutes = row["time_minutes"].as_i64().map(|v| v as i32);
+
+    let source: Source = serde_json::from_str(
+        row["source_json"]
+            .as_str()
+            .ok_or_else(|| DbError::QueryFailed("missing source_json column".to_string()))?,
+    )
+    .map_err(|e| DbError::SerializationError(e.to_string()))?;
+
+    let nutrition: NutritionComputation = serde_json::from_str(
+        row["nutrition_json"]
+            .as_str()
+            .ok_or_else(|| DbError::QueryFailed("missing nutrition_json column".to_string()))?,
+    )
+    .map_err(|e| DbError::SerializationError(e.to_string()))?;
+
+    let cover: CoverOutput = serde_json::from_str(
+        row["cover_json"]
+            .as_str()
+            .ok_or_else(|| DbError::QueryFailed("missing cover_json column".to_string()))?,
+    )
+    .map_err(|e| DbError::SerializationError(e.to_string()))?;
+
+    let tags: Vec<String> = serde_json::from_str(
+        row["tags_json"]
+            .as_str()
+            .ok_or_else(|| DbError::QueryFailed("missing tags_json column".to_string()))?,
+    )
+    .map_err(|e| DbError::SerializationError(e.to_string()))?;
+
+    // Fetch ingredients
+    let ing_stmt = db.prepare(
+        "SELECT raw_text, parsed_json, resolution_json FROM recipe_ingredients WHERE recipe_id = ?1 ORDER BY position ASC"
+    );
+    let ing_result = ing_stmt
+        .bind(&[JsValue::from_str(recipe_id)])
+        .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
+        .all()
+        .await
+        .map_err(|e| DbError::QueryFailed(format!("ingredients query failed: {e}")))?;
+
+    let ing_rows = ing_result
+        .results::<serde_json::Value>()
+        .map_err(|e| DbError::QueryFailed(format!("ingredients parse failed: {e}")))?;
+
+    let mut ingredients = Vec::with_capacity(ing_rows.len());
+    for ing_row in &ing_rows {
+        let parsed: ParsedIngredient = match ing_row["parsed_json"].as_str() {
+            Some(json_str) => serde_json::from_str(json_str)
+                .map_err(|e| DbError::SerializationError(e.to_string()))?,
+            None => ParsedIngredient {
+                quantity: None,
+                unit: None,
+                name: ing_row["raw_text"].as_str().unwrap_or_default().to_string(),
+                preparation: None,
+            },
+        };
+
+        let resolution: IngredientResolution = serde_json::from_str(
+            ing_row["resolution_json"]
+                .as_str()
+                .ok_or_else(|| DbError::QueryFailed("missing resolution_json".to_string()))?,
+        )
+        .map_err(|e| DbError::SerializationError(e.to_string()))?;
+
+        ingredients.push(ResolvedIngredient { parsed, resolution });
+    }
+
+    // Fetch steps
+    let step_stmt = db.prepare(
+        "SELECT step_number, instruction, time_minutes FROM recipe_steps WHERE recipe_id = ?1 ORDER BY step_number ASC"
+    );
+    let step_result = step_stmt
+        .bind(&[JsValue::from_str(recipe_id)])
+        .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
+        .all()
+        .await
+        .map_err(|e| DbError::QueryFailed(format!("steps query failed: {e}")))?;
+
+    let step_rows = step_result
+        .results::<serde_json::Value>()
+        .map_err(|e| DbError::QueryFailed(format!("steps parse failed: {e}")))?;
+
+    let mut steps = Vec::with_capacity(step_rows.len());
+    for step_row in &step_rows {
+        steps.push(Step {
+            number: step_row["step_number"]
+                .as_i64()
+                .ok_or_else(|| DbError::QueryFailed("missing step_number".to_string()))?
+                as i32,
+            instruction: step_row["instruction"]
+                .as_str()
+                .ok_or_else(|| DbError::QueryFailed("missing instruction".to_string()))?
+                .to_string(),
+            time_minutes: step_row["time_minutes"].as_i64().map(|v| v as i32),
+        });
+    }
+
+    Ok(ResolvedRecipe {
+        id: RecipeId::new(recipe_id),
+        title,
+        ingredients,
+        steps,
+        servings,
+        time_minutes,
+        source,
+        nutrition,
+        cover,
+        tags,
+    })
+}
+
 /// Upserts a user's recipe view (save, favorite, notes, patches).
 ///
 /// # Arguments
 ///
-/// * `db` — D1 database binding.
-/// * `view` — The user recipe view to persist.
+/// * `db` -- D1 database binding.
+/// * `view` -- The user recipe view to persist.
 ///
 /// # Errors
 ///

@@ -78,8 +78,33 @@ curl http://localhost:8787/health
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/health` | No | Health check — returns `{"status":"ok","version":"..."}` |
+| GET | `/health` | No | Health check -- returns `{"status":"ok","version":"..."}` |
 | GET | `/me` | Yes | Returns authenticated user's claims from the JWT |
+| POST | `/recipes/capture` | Yes | Capture recipe from text via Claude extraction |
+| GET | `/recipes` | Yes | List all recipes for the authenticated user |
+| GET | `/recipes/:id` | Yes | Get a single recipe by ID |
+
+### Recipe Capture
+
+The capture endpoint accepts manual text input and runs the full extraction pipeline:
+
+```bash
+curl -X POST http://localhost:8787/recipes/capture \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"input_type": "manual", "text": "Chocolate Cake\n\nIngredients:\n2 cups flour\n1 cup sugar\n\nSteps:\n1. Preheat oven\n2. Mix and bake"}'
+```
+
+The pipeline stages:
+1. Save capture input to D1
+2. Call Claude API with tool_use for structured extraction
+3. Parse and resolve ingredients (stub)
+4. Compute nutrition (stub)
+5. Generate cover (stub)
+6. Assemble and save recipe to D1
+7. Return the saved `ResolvedRecipe`
+
+**Required secret:** `npx wrangler secret put ANTHROPIC_API_KEY`
 
 ### Linting
 
@@ -234,3 +259,4 @@ See [ADR-002: Observability](docs/adr/002-observability.md) for the full design 
 - [ADR-002: Observability](docs/adr/002-observability.md)
 - [ADR-003: Authentication](docs/adr/003-authentication.md)
 - [ADR-004: Domain Model](docs/adr/004-domain-model.md)
+- [ADR-005: Capture Pipeline](docs/adr/005-capture-pipeline.md)

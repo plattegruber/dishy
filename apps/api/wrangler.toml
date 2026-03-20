@@ -16,6 +16,9 @@ CLERK_PUBLISHABLE_KEY = "pk_test_placeholder"
 # CLERK_SECRET_KEY is a secret — set via:
 #   npx wrangler secret put CLERK_SECRET_KEY
 
+# ANTHROPIC_API_KEY is a secret — set via:
+#   npx wrangler secret put ANTHROPIC_API_KEY
+
 # D1 Database — create with:
 #   npx wrangler d1 create dishy-db
 # Then replace the database_id below with the real ID.
