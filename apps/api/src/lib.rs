@@ -88,6 +88,9 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> worker::Result<Response
         .get_async("/captures/:id", |req, route_ctx| async move {
             crate::routes::recipes::handle_get_capture_status(req, route_ctx).await
         })
+        .patch_async("/recipes/:id/user-view", |req, route_ctx| async move {
+            crate::routes::recipes::handle_patch_user_view(req, route_ctx).await
+        })
         .run(req, env)
         .await
 }

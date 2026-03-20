@@ -1,4 +1,4 @@
-/// Widget tests for the recipe list screen.
+/// Widget tests for the grocery list screen.
 library;
 
 import 'package:dishy/domain/models/ingredient.dart';
@@ -6,33 +6,48 @@ import 'package:dishy/domain/models/nutrition.dart';
 import 'package:dishy/domain/models/recipe.dart' as recipe_model;
 import 'package:dishy/domain/models/recipe.dart' hide Step;
 import 'package:dishy/presentation/providers/recipe_list_provider.dart';
-import 'package:dishy/presentation/screens/recipe_list_screen.dart';
-import 'package:dishy/presentation/widgets/recipe_card.dart';
+import 'package:dishy/presentation/screens/grocery_list_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Creates a test recipe for use in widget tests.
 ResolvedRecipe _testRecipe({
   String id = 'recipe-001',
   String title = 'Chocolate Cake',
-  int? servings = 8,
-  int? timeMinutes = 60,
 }) {
   return ResolvedRecipe(
     id: id,
     title: title,
     ingredients: const <ResolvedIngredient>[
       ResolvedIngredient(
-        parsed: ParsedIngredient(name: 'flour'),
+        parsed: ParsedIngredient(
+          quantity: 2,
+          unit: 'cups',
+          name: 'flour',
+        ),
         resolution: IngredientResolution.unmatched(text: 'flour'),
+      ),
+      ResolvedIngredient(
+        parsed: ParsedIngredient(
+          quantity: 1,
+          unit: 'cup',
+          name: 'sugar',
+        ),
+        resolution: IngredientResolution.unmatched(text: 'sugar'),
+      ),
+      ResolvedIngredient(
+        parsed: ParsedIngredient(
+          quantity: 3,
+          name: 'eggs',
+        ),
+        resolution: IngredientResolution.unmatched(text: 'eggs'),
       ),
     ],
     steps: const <recipe_model.Step>[
       recipe_model.Step(number: 1, instruction: 'Bake'),
     ],
-    servings: servings,
-    timeMinutes: timeMinutes,
+    servings: 8,
+    timeMinutes: 60,
     source: const Source(platform: Platform.manual),
     nutrition: const NutritionComputation(
       perRecipe: NutritionFacts(
@@ -49,8 +64,8 @@ ResolvedRecipe _testRecipe({
 }
 
 void main() {
-  group('RecipeListScreen', () {
-    testWidgets('shows empty state when no recipes',
+  group('GroceryListScreen', () {
+    testWidgets('shows empty state when no recipes exist',
         (WidgetTester tester) async {
       await tester.pumpWidget(
         ProviderScope(
@@ -60,7 +75,7 @@ void main() {
             ),
           ],
           child: const MaterialApp(
-            home: RecipeListScreen(),
+            home: GroceryListScreen(),
           ),
         ),
       );
@@ -70,7 +85,7 @@ void main() {
       expect(find.text('No recipes yet'), findsOneWidget);
     });
 
-    testWidgets('shows recipe cards when recipes exist',
+    testWidgets('shows recipe selector when recipes exist',
         (WidgetTester tester) async {
       await tester.pumpWidget(
         ProviderScope(
@@ -80,18 +95,18 @@ void main() {
             ),
           ],
           child: const MaterialApp(
-            home: RecipeListScreen(),
+            home: GroceryListScreen(),
           ),
         ),
       );
 
       await tester.pumpAndSettle();
 
+      expect(find.text('Select Recipes'), findsOneWidget);
       expect(find.text('Chocolate Cake'), findsOneWidget);
-      expect(find.text('60 min'), findsOneWidget);
     });
 
-    testWidgets('uses RecipeCard widget for grid items',
+    testWidgets('shows no-selection state initially',
         (WidgetTester tester) async {
       await tester.pumpWidget(
         ProviderScope(
@@ -101,56 +116,17 @@ void main() {
             ),
           ],
           child: const MaterialApp(
-            home: RecipeListScreen(),
+            home: GroceryListScreen(),
           ),
         ),
       );
 
       await tester.pumpAndSettle();
 
-      expect(find.byType(RecipeCard), findsOneWidget);
+      expect(find.text('Select recipes above'), findsOneWidget);
     });
 
-    testWidgets('has a FAB for capturing new recipes',
-        (WidgetTester tester) async {
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: <Override>[
-            recipeListProvider.overrideWith(
-              () => _EmptyRecipeListNotifier(),
-            ),
-          ],
-          child: const MaterialApp(
-            home: RecipeListScreen(),
-          ),
-        ),
-      );
-
-      await tester.pumpAndSettle();
-
-      expect(find.byType(FloatingActionButton), findsOneWidget);
-    });
-
-    testWidgets('shows app title in app bar', (WidgetTester tester) async {
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: <Override>[
-            recipeListProvider.overrideWith(
-              () => _EmptyRecipeListNotifier(),
-            ),
-          ],
-          child: const MaterialApp(
-            home: RecipeListScreen(),
-          ),
-        ),
-      );
-
-      await tester.pumpAndSettle();
-
-      expect(find.text('Dishy'), findsOneWidget);
-    });
-
-    testWidgets('shows search bar when recipes exist',
+    testWidgets('shows grocery items after selecting a recipe',
         (WidgetTester tester) async {
       await tester.pumpWidget(
         ProviderScope(
@@ -160,38 +136,24 @@ void main() {
             ),
           ],
           child: const MaterialApp(
-            home: RecipeListScreen(),
+            home: GroceryListScreen(),
           ),
         ),
       );
 
       await tester.pumpAndSettle();
 
-      expect(find.byType(SearchBar), findsOneWidget);
-    });
-
-    testWidgets('groups recipes by tag', (WidgetTester tester) async {
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: <Override>[
-            recipeListProvider.overrideWith(
-              () => _PopulatedRecipeListNotifier(),
-            ),
-          ],
-          child: const MaterialApp(
-            home: RecipeListScreen(),
-          ),
-        ),
-      );
-
+      // Tap the recipe chip to select it
+      await tester.tap(find.text('Chocolate Cake'));
       await tester.pumpAndSettle();
 
-      // The recipe has tag "dessert", so it should be in a "Dessert" section
-      expect(find.text('Dessert'), findsOneWidget);
+      // Should show ingredient items
+      expect(find.textContaining('flour'), findsOneWidget);
+      expect(find.textContaining('sugar'), findsOneWidget);
+      expect(find.textContaining('eggs'), findsOneWidget);
     });
 
-    testWidgets('shows capture button in empty state',
-        (WidgetTester tester) async {
+    testWidgets('shows Grocery List title', (WidgetTester tester) async {
       await tester.pumpWidget(
         ProviderScope(
           overrides: <Override>[
@@ -200,28 +162,69 @@ void main() {
             ),
           ],
           child: const MaterialApp(
-            home: RecipeListScreen(),
+            home: GroceryListScreen(),
           ),
         ),
       );
 
       await tester.pumpAndSettle();
 
-      expect(
-        find.text('Capture Your First Recipe'),
-        findsOneWidget,
+      expect(find.text('Grocery List'), findsOneWidget);
+    });
+
+    testWidgets('has Select All button', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            recipeListProvider.overrideWith(
+              () => _PopulatedRecipeListNotifier(),
+            ),
+          ],
+          child: const MaterialApp(
+            home: GroceryListScreen(),
+          ),
+        ),
       );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('Select All'), findsOneWidget);
+    });
+
+    testWidgets('items are grouped by category',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            recipeListProvider.overrideWith(
+              () => _PopulatedRecipeListNotifier(),
+            ),
+          ],
+          child: const MaterialApp(
+            home: GroceryListScreen(),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Select the recipe
+      await tester.tap(find.text('Chocolate Cake'));
+      await tester.pumpAndSettle();
+
+      // eggs should be in Dairy & Eggs
+      expect(find.text('Dairy & Eggs'), findsOneWidget);
+      // flour and sugar should be in Pantry
+      expect(find.text('Pantry'), findsOneWidget);
     });
   });
 }
 
-/// A notifier that returns an empty list.
 class _EmptyRecipeListNotifier extends RecipeListNotifier {
   @override
   Future<List<ResolvedRecipe>> build() async => <ResolvedRecipe>[];
 }
 
-/// A notifier that returns a list with one recipe.
 class _PopulatedRecipeListNotifier extends RecipeListNotifier {
   @override
   Future<List<ResolvedRecipe>> build() async => <ResolvedRecipe>[

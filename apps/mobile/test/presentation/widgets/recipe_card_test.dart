@@ -169,5 +169,46 @@ void main() {
 
       expect(find.byType(Card), findsOneWidget);
     });
+
+    testWidgets('shows favorite button when callback is provided',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 200,
+              height: 250,
+              child: RecipeCard(
+                recipe: _testRecipe(),
+                onFavoriteToggle: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+    });
+
+    testWidgets('shows filled heart when favorited',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 200,
+              height: 250,
+              child: RecipeCard(
+                recipe: _testRecipe(),
+                isFavorite: true,
+                onFavoriteToggle: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byIcon(Icons.favorite), findsOneWidget);
+    });
   });
 }

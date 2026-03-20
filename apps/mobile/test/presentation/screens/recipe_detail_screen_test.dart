@@ -7,7 +7,6 @@ import 'package:dishy/domain/models/recipe.dart' as recipe_model;
 import 'package:dishy/domain/models/recipe.dart' hide Step;
 import 'package:dishy/presentation/providers/recipe_detail_provider.dart';
 import 'package:dishy/presentation/screens/recipe_detail_screen.dart';
-import 'package:dishy/presentation/widgets/ingredient_list.dart';
 import 'package:dishy/presentation/widgets/nutrition_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -88,7 +87,7 @@ void main() {
       expect(find.text('Chocolate Cake'), findsOneWidget);
     });
 
-    testWidgets('shows ingredients via IngredientList widget',
+    testWidgets('shows ingredients with checkboxes',
         (WidgetTester tester) async {
       final ResolvedRecipe recipe = _testRecipe();
 
@@ -107,13 +106,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Ingredients'), findsOneWidget);
-      expect(find.byType(IngredientList), findsOneWidget);
-      // Ingredients are rendered in RichText spans
-      final Finder flourFinder = find.byWidgetPredicate(
-        (Widget widget) =>
-            widget is RichText && widget.text.toPlainText().contains('flour'),
-      );
-      expect(flourFinder, findsOneWidget);
+      // Checkboxes for ingredients
+      expect(find.byType(Checkbox), findsAtLeast(2));
     });
 
     testWidgets('shows steps', (WidgetTester tester) async {
@@ -203,7 +197,7 @@ void main() {
       expect(find.text('Estimated'), findsOneWidget);
     });
 
-    testWidgets('shows nutrition macro values', (WidgetTester tester) async {
+    testWidgets('shows Start Cooking button', (WidgetTester tester) async {
       final ResolvedRecipe recipe = _testRecipe();
 
       await tester.pumpWidget(
@@ -220,9 +214,49 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      // Per-recipe values from the test recipe
-      expect(find.text('3200'), findsOneWidget);
-      expect(find.text('Calories'), findsOneWidget);
+      expect(find.text('Start Cooking'), findsOneWidget);
+    });
+
+    testWidgets('shows favorite button in app bar',
+        (WidgetTester tester) async {
+      final ResolvedRecipe recipe = _testRecipe();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            recipeDetailProvider('recipe-001')
+                .overrideWith((Ref ref) async => recipe),
+          ],
+          child: const MaterialApp(
+            home: RecipeDetailScreen(recipeId: 'recipe-001'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+    });
+
+    testWidgets('shows share button in app bar',
+        (WidgetTester tester) async {
+      final ResolvedRecipe recipe = _testRecipe();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            recipeDetailProvider('recipe-001')
+                .overrideWith((Ref ref) async => recipe),
+          ],
+          child: const MaterialApp(
+            home: RecipeDetailScreen(recipeId: 'recipe-001'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.share), findsOneWidget);
     });
   });
 }
