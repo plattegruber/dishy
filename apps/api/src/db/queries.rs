@@ -25,7 +25,7 @@ use crate::types::capture::{CaptureInput, ExtractionArtifact};
 #[cfg(target_arch = "wasm32")]
 use crate::types::ids::{CaptureId, UserId};
 #[cfg(target_arch = "wasm32")]
-use crate::types::recipe::{ResolvedRecipe, UserRecipeView};
+use crate::types::recipe::ResolvedRecipe;
 
 /// Errors that can occur during database operations.
 #[derive(Debug, thiserror::Error)]
@@ -527,55 +527,6 @@ async fn row_to_recipe(
         cover,
         tags,
     })
-}
-
-/// Upserts a user's recipe view (save, favorite, notes, patches).
-///
-/// # Arguments
-///
-/// * `db` -- D1 database binding.
-/// * `view` -- The user recipe view to persist.
-///
-/// # Errors
-///
-/// Returns `DbError` on query or serialization failure.
-#[cfg(target_arch = "wasm32")]
-pub async fn upsert_user_recipe_view(
-    db: &worker::d1::D1Database,
-    view: &UserRecipeView,
-) -> Result<(), DbError> {
-    use worker::wasm_bindgen::JsValue;
-
-    let patches_json = serde_json::to_string(&view.patches)
-        .map_err(|e| DbError::SerializationError(e.to_string()))?;
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let notes_val = match &view.notes {
-        Some(n) => JsValue::from_str(n),
-        None => JsValue::null(),
-    };
-
-    let statement = db.prepare(
-        "INSERT INTO user_recipe_views (recipe_id, user_id, saved, favorite, notes, patches_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(recipe_id, user_id) DO UPDATE SET saved = ?3, favorite = ?4, notes = ?5, patches_json = ?6, updated_at = ?8"
-    );
-
-    statement
-        .bind(&[
-            JsValue::from_str(view.recipe_id.as_str()),
-            JsValue::from_str(view.user_id.as_str()),
-            JsValue::from_f64(f64::from(i32::from(view.saved))),
-            JsValue::from_f64(f64::from(i32::from(view.favorite))),
-            notes_val,
-            JsValue::from_str(&patches_json),
-            JsValue::from_str(&now),
-            JsValue::from_str(&now),
-        ])
-        .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
-        .run()
-        .await
-        .map_err(|e| DbError::QueryFailed(format!("run failed: {e}")))?;
-
-    Ok(())
 }
 
 /// Updates the cover image for a recipe.
