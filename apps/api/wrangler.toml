@@ -41,3 +41,16 @@ migrations_dir = "src/db/migrations"
 [[r2_buckets]]
 binding = "IMAGES"
 bucket_name = "dishy-images"
+
+# Cloudflare Queue for async capture processing (social links, screenshots)
+# Create with:
+#   npx wrangler queues create dishy-capture-queue
+[[queues.producers]]
+binding = "CAPTURE_QUEUE"
+queue = "dishy-capture-queue"
+
+[[queues.consumers]]
+queue = "dishy-capture-queue"
+max_batch_size = 5
+max_retries = 3
+dead_letter_queue = "dishy-capture-dlq"

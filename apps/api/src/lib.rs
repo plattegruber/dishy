@@ -1,10 +1,12 @@
 //! Dishy API -- Cloudflare Worker entry point.
 //!
-//! This module sets up the Worker router and defines the available HTTP routes.
+//! This module sets up the Worker router and defines the available HTTP routes,
+//! plus a queue consumer for async capture processing (social links, screenshots).
+//!
 //! Serves a health check endpoint (unauthenticated), an authenticated `/me`
-//! endpoint, and recipe CRUD endpoints (authenticated via Clerk JWT). All
-//! requests are wrapped with correlation ID middleware for cross-service
-//! observability via Axiom.
+//! endpoint, recipe CRUD endpoints (authenticated via Clerk JWT), and a capture
+//! status polling endpoint. All requests are wrapped with correlation ID
+//! middleware for cross-service observability via Axiom.
 
 pub mod auth;
 pub mod db;
@@ -20,6 +22,9 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 use worker::{event, Context, Env, Request, Response, Router};
+
+#[cfg(target_arch = "wasm32")]
+use worker::MessageExt;
 
 use crate::middleware::{attach_correlation_header, authenticate_request, extract_request_context};
 
@@ -80,8 +85,72 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> worker::Result<Response
         .get_async("/images/:asset_id", |req, route_ctx| async move {
             crate::routes::images::handle_get_image(req, route_ctx).await
         })
+        .get_async("/captures/:id", |req, route_ctx| async move {
+            crate::routes::recipes::handle_get_capture_status(req, route_ctx).await
+        })
         .run(req, env)
         .await
+}
+
+/// Queue consumer for async capture processing.
+///
+/// Processes social link and screenshot captures that were enqueued
+/// by the `POST /recipes/capture` endpoint. Each message contains a
+/// capture ID referencing a row in the `capture_inputs` D1 table.
+///
+/// Uses the `MessageExt` trait for `.ack()` on each message.
+#[cfg(target_arch = "wasm32")]
+#[event(queue)]
+async fn queue(
+    message_batch: worker::MessageBatch<serde_json::Value>,
+    env: Env,
+    _ctx: Context,
+) -> worker::Result<()> {
+    use crate::pipeline::queue::{mark_capture_failed, process_capture, CaptureQueueMessage};
+
+    let messages = message_batch.messages()?;
+
+    for msg in messages {
+        let body = msg.body();
+
+        let queue_msg: CaptureQueueMessage = match serde_json::from_value(body.clone()) {
+            Ok(m) => m,
+            Err(e) => {
+                worker::console_log!(
+                    "[queue] Failed to deserialize queue message: {e}. Acking to prevent retry."
+                );
+                msg.ack();
+                continue;
+            }
+        };
+
+        match process_capture(&queue_msg, &env).await {
+            Ok(()) => {
+                worker::console_log!(
+                    "[queue] Successfully processed capture: {}",
+                    queue_msg.capture_id
+                );
+                msg.ack();
+            }
+            Err(err_msg) => {
+                worker::console_log!(
+                    "[queue] Failed to process capture {}: {}",
+                    queue_msg.capture_id,
+                    err_msg
+                );
+
+                // Mark the capture as failed in D1
+                if let Ok(db) = env.d1("DB") {
+                    let _ = mark_capture_failed(&db, &queue_msg.capture_id, &err_msg).await;
+                }
+
+                // Ack the message so it goes to DLQ after max retries
+                msg.ack();
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Handles GET /health requests.
