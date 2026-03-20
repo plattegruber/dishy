@@ -7,6 +7,7 @@ import 'package:dishy/domain/models/recipe.dart' as recipe_model;
 import 'package:dishy/domain/models/recipe.dart' hide Step;
 import 'package:dishy/presentation/providers/recipe_list_provider.dart';
 import 'package:dishy/presentation/screens/recipe_list_screen.dart';
+import 'package:dishy/presentation/widgets/recipe_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -89,6 +90,26 @@ void main() {
 
       expect(find.text('Chocolate Cake'), findsOneWidget);
       expect(find.text('60 min'), findsOneWidget);
+    });
+
+    testWidgets('uses RecipeCard widget for grid items',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            recipeListProvider.overrideWith(
+              () => _PopulatedRecipeListNotifier(),
+            ),
+          ],
+          child: const MaterialApp(
+            home: RecipeListScreen(),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.byType(RecipeCard), findsOneWidget);
     });
 
     testWidgets('has a FAB for capturing new recipes',

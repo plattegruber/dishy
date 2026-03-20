@@ -1,13 +1,15 @@
 /// Recipe detail screen -- displays a single recipe's full information.
 ///
-/// Shows the recipe title, parsed ingredients with resolution status,
-/// step-by-step instructions, source attribution, and nutrition facts card.
+/// Shows a hero cover image, recipe title, parsed ingredients with
+/// resolution status, step-by-step instructions, source attribution,
+/// and nutrition facts card.
 /// Clean, readable layout per SPEC section 15: "Recipe View".
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/utils/cover_image.dart';
 import '../../domain/models/recipe.dart' as recipe_model;
 import '../../domain/models/recipe.dart' hide Step;
 import '../providers/recipe_detail_provider.dart';
@@ -81,10 +83,16 @@ class _RecipeDetailBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
+          // Hero cover image
+          _HeroCover(recipe: recipe),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
           // Metadata row
           _MetadataRow(recipe: recipe),
           const SizedBox(height: 24),
@@ -206,7 +214,82 @@ class _RecipeDetailBody extends StatelessWidget {
             servings: recipe.servings,
           ),
           const SizedBox(height: 32),
+              ],
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// Hero cover image at the top of the recipe detail.
+///
+/// Displays the cover image full-width at 200px height. Falls back to
+/// a deterministic colored placeholder with the recipe's initial.
+class _HeroCover extends StatelessWidget {
+  const _HeroCover({required this.recipe});
+
+  final ResolvedRecipe recipe;
+
+  @override
+  Widget build(BuildContext context) {
+    final String? imageUrl = coverImageUrl(recipe.cover);
+    final Color color = placeholderColorForTitle(recipe.title);
+    final String initial = initialForTitle(recipe.title);
+
+    if (imageUrl != null) {
+      return SizedBox(
+        height: 200,
+        width: double.infinity,
+        child: Image.network(
+          imageUrl,
+          fit: BoxFit.cover,
+          errorBuilder:
+              (BuildContext context, Object error, StackTrace? stackTrace) {
+            return _HeroPlaceholder(color: color, initial: initial);
+          },
+          loadingBuilder: (
+            BuildContext context,
+            Widget child,
+            ImageChunkEvent? loadingProgress,
+          ) {
+            if (loadingProgress == null) return child;
+            return _HeroPlaceholder(color: color, initial: initial);
+          },
+        ),
+      );
+    }
+
+    return _HeroPlaceholder(color: color, initial: initial);
+  }
+}
+
+/// Colored placeholder for the hero cover area.
+class _HeroPlaceholder extends StatelessWidget {
+  const _HeroPlaceholder({
+    required this.color,
+    required this.initial,
+  });
+
+  final Color color;
+  final String initial;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 200,
+      width: double.infinity,
+      color: color,
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 72,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ),
     );
   }
