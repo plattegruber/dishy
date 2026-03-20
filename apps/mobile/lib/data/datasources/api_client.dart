@@ -229,4 +229,15 @@ class ApiClient {
         await _dio.get<Map<String, Object?>>('/recipes/$id');
     return response.data ?? <String, Object?>{};
   }
+
+  /// Fetches detailed nutrition data for a recipe.
+  ///
+  /// Calls `GET /recipes/:id/nutrition` and returns the nutrition
+  /// breakdown including per-ingredient detail.
+  /// Throws a [DioException] on failure (including 404 if not found).
+  Future<Map<String, Object?>> getRecipeNutrition(String id) async {
+    final Response<Map<String, Object?>> response =
+        await _dio.get<Map<String, Object?>>('/recipes/$id/nutrition');
+    return response.data ?? <String, Object?>{};
+  }
 }

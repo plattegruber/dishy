@@ -7,6 +7,8 @@ import 'package:dishy/domain/models/recipe.dart' as recipe_model;
 import 'package:dishy/domain/models/recipe.dart' hide Step;
 import 'package:dishy/presentation/providers/recipe_detail_provider.dart';
 import 'package:dishy/presentation/screens/recipe_detail_screen.dart';
+import 'package:dishy/presentation/widgets/ingredient_list.dart';
+import 'package:dishy/presentation/widgets/nutrition_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,7 +25,10 @@ ResolvedRecipe _testRecipe() {
           unit: 'cups',
           name: 'flour',
         ),
-        resolution: IngredientResolution.unmatched(text: 'flour'),
+        resolution: IngredientResolution.matched(
+          foodId: '169761',
+          confidence: 0.95,
+        ),
       ),
       ResolvedIngredient(
         parsed: ParsedIngredient(
@@ -43,12 +48,18 @@ ResolvedRecipe _testRecipe() {
     source: Source(platform: Platform.manual),
     nutrition: NutritionComputation(
       perRecipe: NutritionFacts(
-        calories: 0,
-        protein: 0,
-        carbs: 0,
-        fat: 0,
+        calories: 3200,
+        protein: 40,
+        carbs: 450,
+        fat: 140,
       ),
-      status: NutritionStatus.unavailable,
+      perServing: NutritionFacts(
+        calories: 400,
+        protein: 5,
+        carbs: 56.25,
+        fat: 17.5,
+      ),
+      status: NutritionStatus.estimated,
     ),
     cover: CoverOutput.generatedCover(assetId: 'cover-001'),
     tags: <String>['dessert', 'baking'],
@@ -77,7 +88,8 @@ void main() {
       expect(find.text('Chocolate Cake'), findsOneWidget);
     });
 
-    testWidgets('shows ingredients', (WidgetTester tester) async {
+    testWidgets('shows ingredients via IngredientList widget',
+        (WidgetTester tester) async {
       final ResolvedRecipe recipe = _testRecipe();
 
       await tester.pumpWidget(
@@ -95,8 +107,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Ingredients'), findsOneWidget);
-      expect(find.textContaining('flour'), findsOneWidget);
-      expect(find.textContaining('sugar'), findsOneWidget);
+      expect(find.byType(IngredientList), findsOneWidget);
+      // Ingredients are rendered in RichText spans
+      final Finder flourFinder = find.byWidgetPredicate(
+        (Widget widget) =>
+            widget is RichText && widget.text.toPlainText().contains('flour'),
+      );
+      expect(flourFinder, findsOneWidget);
     });
 
     testWidgets('shows steps', (WidgetTester tester) async {
@@ -163,7 +180,7 @@ void main() {
       expect(find.text('baking'), findsOneWidget);
     });
 
-    testWidgets('shows nutrition section', (WidgetTester tester) async {
+    testWidgets('shows NutritionCard widget', (WidgetTester tester) async {
       final ResolvedRecipe recipe = _testRecipe();
 
       await tester.pumpWidget(
@@ -181,6 +198,31 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Nutrition'), findsOneWidget);
+      expect(find.byType(NutritionCard), findsOneWidget);
+      expect(find.text('Nutrition Facts'), findsOneWidget);
+      expect(find.text('Estimated'), findsOneWidget);
+    });
+
+    testWidgets('shows nutrition macro values', (WidgetTester tester) async {
+      final ResolvedRecipe recipe = _testRecipe();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: <Override>[
+            recipeDetailProvider('recipe-001')
+                .overrideWith((Ref ref) async => recipe),
+          ],
+          child: const MaterialApp(
+            home: RecipeDetailScreen(recipeId: 'recipe-001'),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Per-recipe values from the test recipe
+      expect(find.text('3200'), findsOneWidget);
+      expect(find.text('Calories'), findsOneWidget);
     });
   });
 }

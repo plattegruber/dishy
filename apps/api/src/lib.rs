@@ -71,6 +71,9 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> worker::Result<Response
         .get_async("/recipes/:id", |req, route_ctx| async move {
             crate::routes::recipes::handle_get_recipe(req, route_ctx).await
         })
+        .get_async("/recipes/:id/nutrition", |req, route_ctx| async move {
+            crate::routes::recipes::handle_get_nutrition(req, route_ctx).await
+        })
         .run(req, env)
         .await
 }
