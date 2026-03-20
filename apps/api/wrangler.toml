@@ -19,6 +19,10 @@ CLERK_PUBLISHABLE_KEY = "pk_test_placeholder"
 # ANTHROPIC_API_KEY is a secret — set via:
 #   npx wrangler secret put ANTHROPIC_API_KEY
 
+# FDC_API_KEY (USDA FoodData Central) is a secret — set via:
+#   npx wrangler secret put FDC_API_KEY
+# Get a free key from https://api.data.gov/signup/
+
 # D1 Database — create with:
 #   npx wrangler d1 create dishy-db
 # Then replace the database_id below with the real ID.

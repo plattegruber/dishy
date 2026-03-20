@@ -271,12 +271,25 @@ pub async fn handle_capture(
         ]),
     );
 
-    // Parse and resolve ingredients (stub stages)
-    let ingredient_lines = parse_ingredients(&candidate).await;
-    let resolved_ingredients = resolve_ingredients(&ingredient_lines).await;
+    // Get the FDC API key (optional -- degrades gracefully)
+    let fdc_api_key = ctx
+        .secret("FDC_API_KEY")
+        .map(|s| s.to_string())
+        .unwrap_or_default();
 
-    // Compute nutrition (stub)
-    let nutrition = compute_nutrition(&resolved_ingredients).await;
+    // Parse and resolve ingredients
+    let ingredient_lines = parse_ingredients(&candidate, &api_key, &request_ctx.logger).await;
+    let resolved_ingredients =
+        resolve_ingredients(&ingredient_lines, &fdc_api_key, &request_ctx.logger).await;
+
+    // Compute nutrition from resolved ingredients
+    let nutrition = compute_nutrition(
+        &resolved_ingredients,
+        candidate.servings,
+        &fdc_api_key,
+        &request_ctx.logger,
+    )
+    .await;
 
     // Generate cover (stub)
     let cover = generate_cover(&CoverInput {
@@ -598,6 +611,166 @@ pub async fn handle_get_recipe(
     Ok(resp)
 }
 
+/// Handles `GET /recipes/:id/nutrition` -- nutrition breakdown for a recipe.
+///
+/// Returns a detailed nutrition breakdown including per-recipe totals,
+/// per-serving values, and per-ingredient nutrition where available.
+///
+/// # Authentication
+///
+/// Requires a valid Clerk JWT in the `Authorization` header.
+/// Returns 404 if the recipe doesn't belong to the authenticated user.
+///
+/// # Response
+///
+/// Returns the `NutritionComputation` and ingredient-level nutrition as JSON.
+#[cfg(target_arch = "wasm32")]
+pub async fn handle_get_nutrition(
+    req: worker::Request,
+    ctx: worker::RouteContext<()>,
+) -> worker::Result<worker::Response> {
+    use crate::db::queries;
+    use crate::middleware::{
+        attach_correlation_header, authenticate_request, extract_request_context,
+    };
+    use crate::types::ids::UserId;
+
+    let request_ctx = extract_request_context(&req);
+
+    let recipe_id = match ctx.param("id") {
+        Some(id) => id.to_string(),
+        None => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = error_response("missing_id", "Recipe ID is required", 400)?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    request_ctx.logger.info(
+        "Recipe nutrition requested",
+        HashMap::from([
+            (
+                "path".to_string(),
+                serde_json::Value::String(format!("/recipes/{recipe_id}/nutrition")),
+            ),
+            (
+                "recipe_id".to_string(),
+                serde_json::Value::String(recipe_id.clone()),
+            ),
+        ]),
+    );
+
+    // Authenticate
+    let jwks_url = ctx
+        .var("CLERK_JWKS_URL")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| "https://api.clerk.com/v1/jwks".to_string());
+
+    let claims = match authenticate_request(&req, &request_ctx, &jwks_url).await {
+        Ok(claims) => claims,
+        Err(auth_error) => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = auth_error.to_response()?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    let user_id = UserId::new(&claims.sub);
+
+    let db = ctx
+        .env
+        .d1("DB")
+        .map_err(|e| worker::Error::RustError(format!("failed to get D1 binding: {e}")))?;
+
+    let recipe = match queries::get_recipe_by_id(&db, &recipe_id, &user_id).await {
+        Ok(r) => r,
+        Err(crate::db::queries::DbError::NotFound { .. }) => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = error_response("not_found", "Recipe not found", 404)?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+        Err(e) => {
+            request_ctx.logger.error(
+                "Failed to fetch recipe for nutrition",
+                HashMap::from([(
+                    "error".to_string(),
+                    serde_json::Value::String(e.to_string()),
+                )]),
+            );
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp =
+                error_response("db_error", &format!("Failed to fetch recipe: {e}"), 500)?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    // Build the nutrition response with per-ingredient detail
+    let nutrition_response = NutritionDetailResponse {
+        recipe_id: recipe_id.clone(),
+        nutrition: recipe.nutrition,
+        ingredients: recipe
+            .ingredients
+            .into_iter()
+            .map(|i| IngredientNutritionDetail {
+                name: i.parsed.name,
+                quantity: i.parsed.quantity,
+                unit: i.parsed.unit,
+                resolution_type: match &i.resolution {
+                    crate::types::ingredient::IngredientResolution::Matched { .. } => {
+                        "matched".to_string()
+                    }
+                    crate::types::ingredient::IngredientResolution::FuzzyMatched { .. } => {
+                        "fuzzy_matched".to_string()
+                    }
+                    crate::types::ingredient::IngredientResolution::Unmatched { .. } => {
+                        "unmatched".to_string()
+                    }
+                },
+            })
+            .collect(),
+    };
+
+    flush_logs(&request_ctx, &ctx).await;
+
+    let json = serde_json::to_string(&nutrition_response)
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+    let mut resp = worker::Response::ok(json)?;
+    let _ = resp.headers_mut().set("Content-Type", "application/json");
+    attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+    Ok(resp)
+}
+
+/// Response body for the nutrition detail endpoint.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Serialize)]
+struct NutritionDetailResponse {
+    /// The recipe ID.
+    recipe_id: String,
+    /// The overall nutrition computation.
+    nutrition: crate::types::nutrition::NutritionComputation,
+    /// Per-ingredient nutrition detail.
+    ingredients: Vec<IngredientNutritionDetail>,
+}
+
+/// Per-ingredient detail in the nutrition response.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Serialize)]
+struct IngredientNutritionDetail {
+    /// The ingredient name.
+    name: String,
+    /// The ingredient quantity.
+    quantity: Option<f64>,
+    /// The ingredient unit.
+    unit: Option<String>,
+    /// The resolution type (matched/fuzzy_matched/unmatched).
+    resolution_type: String,
+}
+
 /// Builds a JSON error response with the given code, message, and HTTP status.
 #[cfg(target_arch = "wasm32")]
 fn error_response(code: &str, message: &str, status: u16) -> worker::Result<worker::Response> {
@@ -660,6 +833,16 @@ pub async fn handle_list_recipes(
 /// Stub for `handle_get_recipe` on non-WASM targets.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn handle_get_recipe(
+    req: worker::Request,
+    ctx: worker::RouteContext<()>,
+) -> worker::Result<worker::Response> {
+    let _ = (req, ctx);
+    worker::Response::error("Not available outside WASM runtime", 501)
+}
+
+/// Stub for `handle_get_nutrition` on non-WASM targets.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn handle_get_nutrition(
     req: worker::Request,
     ctx: worker::RouteContext<()>,
 ) -> worker::Result<worker::Response> {

@@ -83,6 +83,7 @@ curl http://localhost:8787/health
 | POST | `/recipes/capture` | Yes | Capture recipe from text via Claude extraction |
 | GET | `/recipes` | Yes | List all recipes for the authenticated user |
 | GET | `/recipes/:id` | Yes | Get a single recipe by ID |
+| GET | `/recipes/:id/nutrition` | Yes | Detailed nutrition breakdown per ingredient |
 
 ### Recipe Capture
 
@@ -98,13 +99,20 @@ curl -X POST http://localhost:8787/recipes/capture \
 The pipeline stages:
 1. Save capture input to D1
 2. Call Claude API with tool_use for structured extraction
-3. Parse and resolve ingredients (stub)
-4. Compute nutrition (stub)
-5. Generate cover (stub)
-6. Assemble and save recipe to D1
-7. Return the saved `ResolvedRecipe`
+3. Parse ingredients via Claude API (tool_use for structured parsing)
+4. Resolve ingredients against USDA FoodData Central
+5. Compute nutrition from resolved ingredients (per-recipe and per-serving)
+6. Generate cover (stub)
+7. Assemble and save recipe to D1
+8. Return the saved `ResolvedRecipe`
 
-**Required secret:** `npx wrangler secret put ANTHROPIC_API_KEY`
+**Required secrets:**
+```bash
+npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler secret put FDC_API_KEY  # Free key from https://api.data.gov/signup/
+```
+
+**Note:** The FDC_API_KEY is optional. Without it, ingredient resolution and nutrition computation are skipped (status: unavailable). The pipeline degrades gracefully.
 
 ### Linting
 
@@ -260,3 +268,4 @@ See [ADR-002: Observability](docs/adr/002-observability.md) for the full design 
 - [ADR-003: Authentication](docs/adr/003-authentication.md)
 - [ADR-004: Domain Model](docs/adr/004-domain-model.md)
 - [ADR-005: Capture Pipeline](docs/adr/005-capture-pipeline.md)
+- [ADR-006: Ingredient & Nutrition Pipeline](docs/adr/006-ingredient-nutrition-pipeline.md)

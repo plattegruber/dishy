@@ -1,17 +1,18 @@
 /// Recipe detail screen -- displays a single recipe's full information.
 ///
-/// Shows the recipe title, ingredients list, step-by-step instructions,
-/// source attribution, and nutrition placeholder. Clean, readable layout
-/// per SPEC section 15: "Recipe View".
+/// Shows the recipe title, parsed ingredients with resolution status,
+/// step-by-step instructions, source attribution, and nutrition facts card.
+/// Clean, readable layout per SPEC section 15: "Recipe View".
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../domain/models/ingredient.dart';
 import '../../domain/models/recipe.dart' as recipe_model;
 import '../../domain/models/recipe.dart' hide Step;
 import '../providers/recipe_detail_provider.dart';
+import '../widgets/ingredient_list.dart';
+import '../widgets/nutrition_card.dart';
 
 /// Screen displaying the full details of a single recipe.
 ///
@@ -111,26 +112,7 @@ class _RecipeDetailBody extends StatelessWidget {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 8),
-          ...recipe.ingredients.map(
-            (ResolvedIngredient ingredient) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  const Text(
-                    '\u2022 ',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  Expanded(
-                    child: Text(
-                      _formatIngredient(ingredient),
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          IngredientList(ingredients: recipe.ingredients),
           const SizedBox(height: 24),
 
           // Steps section
@@ -213,47 +195,20 @@ class _RecipeDetailBody extends StatelessWidget {
             const SizedBox(height: 24),
           ],
 
-          // Nutrition placeholder
+          // Nutrition card
           Text(
             'Nutrition',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 8),
-          Text(
-            'Nutrition data is ${recipe.nutrition.status.name}',
-            style: const TextStyle(fontSize: 14, color: Colors.grey),
+          NutritionCard(
+            nutrition: recipe.nutrition,
+            servings: recipe.servings,
           ),
           const SizedBox(height: 32),
         ],
       ),
     );
-  }
-
-  /// Formats a resolved ingredient for display.
-  String _formatIngredient(ResolvedIngredient ingredient) {
-    final ParsedIngredient parsed = ingredient.parsed;
-    final StringBuffer buffer = StringBuffer();
-
-    if (parsed.quantity != null) {
-      // Format quantity nicely (remove trailing .0)
-      final double qty = parsed.quantity!;
-      final String qtyStr = qty == qty.toInt().toDouble()
-          ? qty.toInt().toString()
-          : qty.toString();
-      buffer.write('$qtyStr ');
-    }
-
-    if (parsed.unit != null) {
-      buffer.write('${parsed.unit} ');
-    }
-
-    buffer.write(parsed.name);
-
-    if (parsed.preparation != null) {
-      buffer.write(', ${parsed.preparation}');
-    }
-
-    return buffer.toString();
   }
 }
 

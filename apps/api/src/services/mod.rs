@@ -5,3 +5,6 @@
 //! they accept typed domain structs and return typed results.
 
 pub mod extraction;
+pub mod ingredient_parser;
+pub mod ingredient_resolver;
+pub mod nutrition;
