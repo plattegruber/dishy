@@ -20,6 +20,8 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 #[cfg(target_arch = "wasm32")]
+use worker::MessageExt;
+#[cfg(target_arch = "wasm32")]
 use worker::Queue;
 use worker::{event, Context, Env, Request, Response, Router};
 
@@ -246,7 +248,7 @@ async fn queue_handler(
         .map(|s| s.to_string())
         .unwrap_or_default();
 
-    for message in message_batch.messages() {
+    for message in message_batch.messages()? {
         let logger = logging::Logger::new(uuid::Uuid::new_v4().to_string(), String::new());
 
         let job: CaptureJob = match serde_json::from_value(message.body().clone()) {
