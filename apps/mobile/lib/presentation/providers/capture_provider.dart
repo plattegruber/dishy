@@ -1,6 +1,6 @@
 /// Riverpod provider for the recipe capture flow state.
 ///
-/// Manages the lifecycle of submitting raw text, social links, or
+/// Manages the lifecycle of submitting raw text, social links, and
 /// screenshots for extraction:
 /// idle -> loading -> success/error (sync)
 /// idle -> loading -> polling -> success/error (async)
