@@ -71,6 +71,12 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> worker::Result<Response
         .get_async("/recipes/:id", |req, route_ctx| async move {
             crate::routes::recipes::handle_get_recipe(req, route_ctx).await
         })
+        .post_async("/recipes/:id/cover", |req, route_ctx| async move {
+            crate::routes::images::handle_upload_cover(req, route_ctx).await
+        })
+        .get_async("/images/:asset_id", |req, route_ctx| async move {
+            crate::routes::images::handle_get_image(req, route_ctx).await
+        })
         .run(req, env)
         .await
 }

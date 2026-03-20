@@ -50,7 +50,7 @@ ResolvedRecipe _testRecipe() {
       ),
       status: NutritionStatus.unavailable,
     ),
-    cover: CoverOutput.generatedCover(assetId: 'cover-001'),
+    cover: CoverOutput.generatedCover(assetId: 'generated_cover-001'),
     tags: <String>['dessert', 'baking'],
   );
 }
@@ -74,7 +74,8 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      expect(find.text('Chocolate Cake'), findsOneWidget);
+      // Title appears in both app bar and hero cover placeholder.
+      expect(find.text('Chocolate Cake'), findsWidgets);
     });
 
     testWidgets('shows ingredients', (WidgetTester tester) async {

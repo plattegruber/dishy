@@ -28,6 +28,7 @@ Recipe Capture & Cooking App. Convert messy, ephemeral food content into structu
 │   │   │   ├── errors.rs       # Typed auth & API error responses
 │   │   │   ├── logging.rs      # Structured logging & Axiom transport
 │   │   │   ├── middleware.rs   # Correlation IDs, auth extraction, logging context
+│   │   │   ├── services/       # Business logic (extraction, storage, cover)
 │   │   │   ├── types/          # Domain types from SPEC §8
 │   │   │   ├── db/             # D1 database schema, migrations, queries
 │   │   │   └── pipeline/       # Capture pipeline contracts (SPEC §9)
@@ -83,6 +84,8 @@ curl http://localhost:8787/health
 | POST | `/recipes/capture` | Yes | Capture recipe from text via Claude extraction |
 | GET | `/recipes` | Yes | List all recipes for the authenticated user |
 | GET | `/recipes/:id` | Yes | Get a single recipe by ID |
+| POST | `/recipes/:id/cover` | Yes | Upload a cover image for a recipe |
+| GET | `/images/:asset_id` | No | Serve an image from R2 storage |
 
 ### Recipe Capture
 
@@ -100,7 +103,7 @@ The pipeline stages:
 2. Call Claude API with tool_use for structured extraction
 3. Parse and resolve ingredients (stub)
 4. Compute nutrition (stub)
-5. Generate cover (stub)
+5. Generate cover (selects source image or creates styled placeholder)
 6. Assemble and save recipe to D1
 7. Return the saved `ResolvedRecipe`
 
@@ -226,6 +229,38 @@ npx wrangler d1 migrations apply DB --remote
 
 See [ADR-004: Domain Model](docs/adr/004-domain-model.md) for the full schema design rationale.
 
+## Image Storage (Cloudflare R2)
+
+Recipe cover images are stored in Cloudflare R2. The API uses the `worker` crate's native R2 bindings.
+
+### Setup
+
+```bash
+# Create the R2 bucket (one-time)
+npx wrangler r2 bucket create dishy-images
+```
+
+The bucket is configured in `wrangler.toml`:
+
+```toml
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "dishy-images"
+```
+
+### Cover Images
+
+Every recipe has a cover image. The cover generation service uses a two-tier strategy:
+
+1. **Source images:** If the extraction pipeline provides images, the best one is selected and stored in R2.
+2. **Fallback placeholders:** When no images are available, a styled SVG placeholder is generated with a deterministic color based on the recipe title.
+
+Users can also upload custom cover images via `POST /recipes/:id/cover` (supports JPEG, PNG, WebP, max 10 MB).
+
+Images are served via `GET /images/:asset_id` with CDN-friendly cache headers (`Cache-Control: public, max-age=31536000, immutable`).
+
+See [ADR-007: Cover Generation](docs/adr/007-cover-generation.md) for the full design rationale.
+
 ## Running All Tests
 
 ```bash
@@ -260,3 +295,4 @@ See [ADR-002: Observability](docs/adr/002-observability.md) for the full design 
 - [ADR-003: Authentication](docs/adr/003-authentication.md)
 - [ADR-004: Domain Model](docs/adr/004-domain-model.md)
 - [ADR-005: Capture Pipeline](docs/adr/005-capture-pipeline.md)
+- [ADR-007: Cover Generation](docs/adr/007-cover-generation.md)

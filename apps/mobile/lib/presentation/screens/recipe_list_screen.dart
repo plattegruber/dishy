@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../domain/models/recipe.dart';
 import '../providers/recipe_list_provider.dart';
+import '../widgets/recipe_card.dart';
 
 /// Main screen showing the user's saved recipes in a grid layout.
 ///
@@ -104,12 +105,15 @@ class RecipeListScreen extends ConsumerWidget {
                 crossAxisCount: 2,
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
-                childAspectRatio: 0.85,
+                childAspectRatio: 0.75,
               ),
               itemCount: recipes.length,
               itemBuilder: (BuildContext context, int index) {
                 final ResolvedRecipe recipe = recipes[index];
-                return _RecipeCard(recipe: recipe);
+                return RecipeCard(
+                  recipe: recipe,
+                  onTap: () => context.go('/recipes/${recipe.id}'),
+                );
               },
             ),
           );
@@ -124,77 +128,3 @@ class RecipeListScreen extends ConsumerWidget {
   }
 }
 
-/// A single recipe card in the grid.
-///
-/// Displays the recipe title, tags, and metadata (servings, time).
-/// Tapping navigates to the recipe detail screen.
-class _RecipeCard extends StatelessWidget {
-  const _RecipeCard({required this.recipe});
-
-  final ResolvedRecipe recipe;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: () => context.go('/recipes/${recipe.id}'),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              // Cover placeholder
-              Container(
-                height: 80,
-                decoration: BoxDecoration(
-                  color: Colors.deepOrange.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Center(
-                  child: Icon(
-                    Icons.restaurant,
-                    size: 32,
-                    color: Colors.deepOrange,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                recipe.title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const Spacer(),
-              Row(
-                children: <Widget>[
-                  if (recipe.timeMinutes != null) ...<Widget>[
-                    const Icon(Icons.timer_outlined, size: 14, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${recipe.timeMinutes} min',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  if (recipe.servings != null) ...<Widget>[
-                    const Icon(Icons.people_outlined, size: 14, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${recipe.servings}',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ],
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

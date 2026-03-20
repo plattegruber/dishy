@@ -30,3 +30,9 @@ binding = "DB"
 database_name = "dishy-db"
 database_id = "placeholder-replace-after-d1-create"
 migrations_dir = "src/db/migrations"
+
+# R2 Bucket — create with:
+#   npx wrangler r2 bucket create dishy-images
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "dishy-images"

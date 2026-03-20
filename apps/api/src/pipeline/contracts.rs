@@ -191,14 +191,20 @@ pub async fn compute_nutrition(ingredients: &[ResolvedIngredient]) -> NutritionC
 /// Generates a cover image for a recipe.
 ///
 /// Selects, enhances, or generates a cover image based on the
-/// available source images and recipe metadata.
+/// available source images and recipe metadata. Delegates to the
+/// cover generation service which handles both source image
+/// selection and fallback placeholder generation.
 ///
 /// **SPEC S9:** `generateCover(CoverInput) -> CoverOutput`
 pub async fn generate_cover(input: &CoverInput) -> CoverOutput {
-    let _ = input;
-    // Stub: return a generated cover placeholder
-    CoverOutput::GeneratedCover {
-        asset_id: AssetId::new("placeholder_cover"),
+    match crate::services::cover::generate_cover(input) {
+        Ok(result) => result.cover,
+        Err(_) => {
+            // Fallback: never leave a recipe without a cover.
+            CoverOutput::GeneratedCover {
+                asset_id: AssetId::new("placeholder_cover"),
+            }
+        }
     }
 }
 
@@ -384,17 +390,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_cover_returns_generated() {
+    async fn generate_cover_returns_generated_for_no_images() {
         let input = CoverInput {
             images: vec![],
             title: "Test Recipe".to_string(),
         };
         let cover = generate_cover(&input).await;
         match cover {
-            CoverOutput::GeneratedCover { asset_id } => {
-                assert_eq!(asset_id.as_str(), "placeholder_cover");
+            CoverOutput::GeneratedCover { .. } => {
+                // The cover service generates a deterministic ID based on the title.
             }
             other => panic!("expected GeneratedCover, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_cover_returns_source_image_when_available() {
+        let input = CoverInput {
+            images: vec![AssetId::new("img_source_001")],
+            title: "Test Recipe".to_string(),
+        };
+        let cover = generate_cover(&input).await;
+        match cover {
+            CoverOutput::SourceImage { asset_id } => {
+                assert_eq!(asset_id.as_str(), "img_source_001");
+            }
+            other => panic!("expected SourceImage, got {other:?}"),
         }
     }
 

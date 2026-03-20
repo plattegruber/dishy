@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../domain/models/ingredient.dart';
 import '../../domain/models/recipe.dart' as recipe_model;
 import '../../domain/models/recipe.dart' hide Step;
+import '../providers/image_provider.dart';
 import '../providers/recipe_detail_provider.dart';
 
 /// Screen displaying the full details of a single recipe.
@@ -80,10 +81,16 @@ class _RecipeDetailBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
+          // Hero cover image
+          _HeroCover(recipe: recipe),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
           // Metadata row
           _MetadataRow(recipe: recipe),
           const SizedBox(height: 24),
@@ -224,6 +231,9 @@ class _RecipeDetailBody extends StatelessWidget {
             style: const TextStyle(fontSize: 14, color: Colors.grey),
           ),
           const SizedBox(height: 32),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -254,6 +264,104 @@ class _RecipeDetailBody extends StatelessWidget {
     }
 
     return buffer.toString();
+  }
+}
+
+/// Hero cover image displayed at the top of the recipe detail view.
+///
+/// Shows the cover image from the network if available, or a styled
+/// placeholder with a color matching the recipe title.
+class _HeroCover extends StatelessWidget {
+  const _HeroCover({required this.recipe});
+
+  final ResolvedRecipe recipe;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool hasImage = coverHasNetworkImage(recipe.cover);
+    final Color color = placeholderColorForTitle(recipe.title);
+
+    return SizedBox(
+      height: 220,
+      width: double.infinity,
+      child: hasImage
+          ? Image.network(
+              imageUrlForAsset(assetIdFromCover(recipe.cover)),
+              fit: BoxFit.cover,
+              errorBuilder: (
+                BuildContext context,
+                Object error,
+                StackTrace? stackTrace,
+              ) {
+                return _PlaceholderCover(color: color, title: recipe.title);
+              },
+              loadingBuilder: (
+                BuildContext context,
+                Widget child,
+                ImageChunkEvent? loadingProgress,
+              ) {
+                if (loadingProgress == null) return child;
+                return _PlaceholderCover(
+                  color: color,
+                  title: recipe.title,
+                  showLoading: true,
+                );
+              },
+            )
+          : _PlaceholderCover(color: color, title: recipe.title),
+    );
+  }
+}
+
+/// A styled placeholder for the hero cover area.
+class _PlaceholderCover extends StatelessWidget {
+  const _PlaceholderCover({
+    required this.color,
+    required this.title,
+    this.showLoading = false,
+  });
+
+  final Color color;
+  final String title;
+  final bool showLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: color,
+      child: Center(
+        child: showLoading
+            ? const CircularProgressIndicator(
+                color: Colors.white70,
+                strokeWidth: 2,
+              )
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  const Icon(
+                    Icons.restaurant,
+                    size: 48,
+                    color: Colors.white70,
+                  ),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
   }
 }
 
