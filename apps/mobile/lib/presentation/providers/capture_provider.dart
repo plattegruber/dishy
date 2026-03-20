@@ -183,7 +183,7 @@ class CaptureNotifier extends StateNotifier<CaptureState> {
           pipelineState: status.pipelineState,
         );
       }
-    } on Exception catch (e) {
+    } on Exception {
       // Network error during polling -- don't stop, just log
       // The timer will retry on the next tick
       state = CapturePolling(
