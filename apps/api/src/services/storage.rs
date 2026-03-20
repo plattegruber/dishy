@@ -164,11 +164,11 @@ pub async fn upload_image(
 
     let asset_id = generate_asset_id(prefix, content_type)?;
 
-    let mut http_metadata = worker::r2::HttpMetadata::default();
+    let mut http_metadata = worker::HttpMetadata::default();
     http_metadata.content_type = Some(content_type.to_string());
 
     bucket
-        .put(asset_id.as_str(), worker::r2::Data::Bytes(data.to_vec()))
+        .put(asset_id.as_str(), worker::Data::Bytes(data.to_vec()))
         .http_metadata(http_metadata)
         .execute()
         .await

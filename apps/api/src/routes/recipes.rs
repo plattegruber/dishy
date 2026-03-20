@@ -75,7 +75,7 @@ pub async fn handle_capture(
     };
     use crate::services::extraction::extract_recipe_from_text;
     use crate::types::capture::CaptureInput;
-    use crate::types::ids::{AssetId, CaptureId, UserId};
+    use crate::types::ids::{CaptureId, UserId};
     use crate::types::recipe::{Platform, Source, Step};
 
     let request_ctx = extract_request_context(&req);
