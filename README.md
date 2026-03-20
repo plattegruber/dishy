@@ -28,6 +28,7 @@ Recipe Capture & Cooking App. Convert messy, ephemeral food content into structu
 │   │   │   ├── errors.rs       # Typed auth & API error responses
 │   │   │   ├── logging.rs      # Structured logging & Axiom transport
 │   │   │   ├── middleware.rs   # Correlation IDs, auth extraction, logging context
+│   │   │   ├── services/       # Business logic (extraction, nutrition, storage, cover)
 │   │   │   ├── types/          # Domain types from SPEC §8
 │   │   │   ├── db/             # D1 database schema, migrations, queries
 │   │   │   └── pipeline/       # Capture pipeline contracts (SPEC §9)
@@ -84,6 +85,8 @@ curl http://localhost:8787/health
 | GET | `/recipes` | Yes | List all recipes for the authenticated user |
 | GET | `/recipes/:id` | Yes | Get a single recipe by ID |
 | GET | `/recipes/:id/nutrition` | Yes | Detailed nutrition breakdown per ingredient |
+| POST | `/recipes/:id/cover` | Yes | Upload a cover image for a recipe (JPEG/PNG/WebP, max 10 MB) |
+| GET | `/images/:asset_id` | No | Serve an image from R2 with cache headers |
 
 ### Recipe Capture
 
@@ -102,7 +105,7 @@ The pipeline stages:
 3. Parse ingredients via Claude API (tool_use for structured parsing)
 4. Resolve ingredients against USDA FoodData Central
 5. Compute nutrition from resolved ingredients (per-recipe and per-serving)
-6. Generate cover (stub)
+6. Generate cover (SVG placeholder via R2, or source image if uploaded)
 7. Assemble and save recipe to D1
 8. Return the saved `ResolvedRecipe`
 
@@ -234,6 +237,28 @@ npx wrangler d1 migrations apply DB --remote
 
 See [ADR-004: Domain Model](docs/adr/004-domain-model.md) for the full schema design rationale.
 
+## Image Storage (Cloudflare R2)
+
+Recipe cover images are stored in Cloudflare R2. The API generates deterministic SVG placeholders for recipes without uploaded images.
+
+### Setup
+
+```bash
+# Create the R2 bucket (one-time)
+npx wrangler r2 bucket create dishy-images
+```
+
+The `IMAGES` binding is already configured in `wrangler.toml`.
+
+### Cover Image Flow
+
+1. **During capture:** An SVG placeholder is generated from the recipe title (deterministic color + initial) and uploaded to R2.
+2. **User upload:** `POST /recipes/:id/cover` accepts JPEG/PNG/WebP images (max 10 MB) and stores them in R2.
+3. **Serving:** `GET /images/:asset_id` serves images from R2 with a 1-year cache (immutable assets).
+4. **Fallback:** The mobile app shows a local color placeholder matching the server-side SVG while the image loads.
+
+See [ADR-007: Cover Image Generation](docs/adr/007-cover-image-generation.md) for the full design rationale.
+
 ## Running All Tests
 
 ```bash
@@ -269,3 +294,4 @@ See [ADR-002: Observability](docs/adr/002-observability.md) for the full design 
 - [ADR-004: Domain Model](docs/adr/004-domain-model.md)
 - [ADR-005: Capture Pipeline](docs/adr/005-capture-pipeline.md)
 - [ADR-006: Ingredient & Nutrition Pipeline](docs/adr/006-ingredient-nutrition-pipeline.md)
+- [ADR-007: Cover Image Generation](docs/adr/007-cover-image-generation.md)

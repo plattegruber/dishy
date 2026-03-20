@@ -276,16 +276,47 @@ pub async fn compute_nutrition(
 
 /// Generates a cover image for a recipe.
 ///
-/// Selects, enhances, or generates a cover image based on the
-/// available source images and recipe metadata.
+/// When an R2 bucket is available, delegates to the cover generation
+/// service which uploads source images or generates SVG placeholders
+/// and stores them in R2. Without a bucket (e.g., in tests), returns
+/// a deterministic generated cover based on the recipe title.
 ///
 /// **SPEC S9:** `generateCover(CoverInput) -> CoverOutput`
-pub async fn generate_cover(input: &CoverInput) -> CoverOutput {
-    let _ = input;
-    // Stub: return a generated cover placeholder
-    CoverOutput::GeneratedCover {
-        asset_id: AssetId::new("placeholder_cover"),
+///
+/// # Arguments
+///
+/// * `input` - The cover input containing images and title.
+/// * `bucket` - Optional R2 bucket for image storage.
+/// * `logger` - Optional logger for structured logging.
+#[cfg(target_arch = "wasm32")]
+pub async fn generate_cover(
+    input: &CoverInput,
+    bucket: Option<&worker::Bucket>,
+    logger: Option<&Logger>,
+) -> CoverOutput {
+    let default_logger = Logger::new("cover-gen".to_string(), String::new());
+    let logger = logger.unwrap_or(&default_logger);
+
+    match bucket {
+        Some(b) => {
+            crate::services::cover::generate_cover(b, None, None, &input.title, logger).await
+        }
+        None => {
+            // No R2 bucket available — return a deterministic placeholder
+            crate::services::cover::generate_cover_stub(&input.title)
+        }
     }
+}
+
+/// Generates a cover image for a recipe (non-WASM stub).
+///
+/// Returns a deterministic generated cover based on the recipe title.
+/// Used in host-target builds for testing.
+///
+/// **SPEC S9:** `generateCover(CoverInput) -> CoverOutput`
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn generate_cover(input: &CoverInput) -> CoverOutput {
+    crate::services::cover::generate_cover_stub(&input.title)
 }
 
 /// All inputs needed to assemble a final resolved recipe.
@@ -548,9 +579,32 @@ mod tests {
         let cover = generate_cover(&input).await;
         match cover {
             CoverOutput::GeneratedCover { asset_id } => {
-                assert_eq!(asset_id.as_str(), "placeholder_cover");
+                assert!(
+                    asset_id.as_str().starts_with("generated_"),
+                    "expected deterministic generated cover ID, got {}",
+                    asset_id.as_str()
+                );
             }
             other => panic!("expected GeneratedCover, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_cover_is_deterministic() {
+        let input = CoverInput {
+            images: vec![],
+            title: "Chocolate Cake".to_string(),
+        };
+        let cover1 = generate_cover(&input).await;
+        let cover2 = generate_cover(&input).await;
+        match (cover1, cover2) {
+            (
+                CoverOutput::GeneratedCover { asset_id: id1 },
+                CoverOutput::GeneratedCover { asset_id: id2 },
+            ) => {
+                assert_eq!(id1.as_str(), id2.as_str());
+            }
+            _ => panic!("expected both to be GeneratedCover"),
         }
     }
 

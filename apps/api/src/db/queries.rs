@@ -578,6 +578,47 @@ pub async fn upsert_user_recipe_view(
     Ok(())
 }
 
+/// Updates the cover image for a recipe.
+///
+/// # Arguments
+///
+/// * `db` -- D1 database binding.
+/// * `recipe_id` -- The recipe ID to update.
+/// * `cover` -- The new cover output to set.
+///
+/// # Errors
+///
+/// Returns `DbError::QueryFailed` on query failure, or
+/// `DbError::SerializationError` if the cover cannot be serialized.
+#[cfg(target_arch = "wasm32")]
+pub async fn update_recipe_cover(
+    db: &worker::d1::D1Database,
+    recipe_id: &str,
+    cover: &crate::types::recipe::CoverOutput,
+) -> Result<(), DbError> {
+    use worker::wasm_bindgen::JsValue;
+
+    let cover_json =
+        serde_json::to_string(cover).map_err(|e| DbError::SerializationError(e.to_string()))?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let statement = db.prepare("UPDATE recipes SET cover_json = ?1, updated_at = ?2 WHERE id = ?3");
+
+    statement
+        .bind(&[
+            JsValue::from_str(&cover_json),
+            JsValue::from_str(&now),
+            JsValue::from_str(recipe_id),
+        ])
+        .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
+        .run()
+        .await
+        .map_err(|e| DbError::QueryFailed(format!("run failed: {e}")))?;
+
+    Ok(())
+}
+
 // Verify domain types are importable on non-wasm targets (catches breakage early).
 #[cfg(not(target_arch = "wasm32"))]
 const _: () = {

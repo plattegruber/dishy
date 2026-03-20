@@ -291,11 +291,16 @@ pub async fn handle_capture(
     )
     .await;
 
-    // Generate cover (stub)
-    let cover = generate_cover(&CoverInput {
-        images: vec![],
-        title: candidate.title.clone().unwrap_or_default(),
-    })
+    // Generate cover with R2 storage
+    let images_bucket = ctx.env.bucket("IMAGES").ok();
+    let cover = generate_cover(
+        &CoverInput {
+            images: vec![],
+            title: candidate.title.clone().unwrap_or_default(),
+        },
+        images_bucket.as_ref(),
+        Some(&request_ctx.logger),
+    )
     .await;
 
     // Build steps
