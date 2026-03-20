@@ -1,11 +1,11 @@
-/// Root application widget with Material theming and GoRouter navigation.
+/// Root application widget with Material 3 theming and GoRouter navigation.
 ///
 /// Configures the [GoRouter] with an authentication guard that redirects
 /// unauthenticated users to the sign-in screen. The router is rebuilt
 /// whenever the auth state changes via a Riverpod [refreshListenable].
 ///
 /// Routes:
-/// - `/` -- recipe list (home)
+/// - `/` -- shell screen with bottom navigation (recipes, grocery, profile)
 /// - `/capture` -- capture screen
 /// - `/recipes/:id` -- recipe detail
 /// - `/sign-in` -- sign-in screen
@@ -20,7 +20,7 @@ import 'core/auth/auth_provider.dart';
 import 'core/auth/auth_state.dart';
 import 'presentation/screens/capture_screen.dart';
 import 'presentation/screens/recipe_detail_screen.dart';
-import 'presentation/screens/recipe_list_screen.dart';
+import 'presentation/screens/shell_screen.dart';
 import 'presentation/screens/sign_in_screen.dart';
 
 /// Provides the [GoRouter] instance configured with auth-aware routing.
@@ -38,7 +38,7 @@ final Provider<GoRouter> routerProvider = Provider<GoRouter>((Ref ref) {
       GoRoute(
         path: homePath,
         builder: (BuildContext context, GoRouterState state) {
-          return const RecipeListScreen();
+          return const ShellScreen();
         },
       ),
       GoRoute(
@@ -82,8 +82,8 @@ class GoRouterRefreshNotifier extends ChangeNotifier {
 /// Root widget for the Dishy application.
 ///
 /// Sets up [MaterialApp.router] with the GoRouter instance (which
-/// includes the auth guard) and the application theme. This widget
-/// sits directly under [ProviderScope] in the widget tree.
+/// includes the auth guard) and a warm Material 3 theme designed
+/// for a food/cooking app.
 class DishyApp extends ConsumerWidget {
   /// Creates the root application widget.
   const DishyApp({super.key});
@@ -94,12 +94,37 @@ class DishyApp extends ConsumerWidget {
 
     return MaterialApp.router(
       title: 'Dishy',
-      theme: ThemeData(
-        colorSchemeSeed: Colors.deepOrange,
-        useMaterial3: true,
-      ),
+      theme: _buildTheme(),
       routerConfig: router,
       debugShowCheckedModeBanner: false,
+    );
+  }
+
+  /// Builds the Material 3 theme with a warm food/cooking color palette.
+  static ThemeData _buildTheme() {
+    return ThemeData(
+      colorSchemeSeed: Colors.deepOrange,
+      useMaterial3: true,
+      appBarTheme: const AppBarTheme(
+        scrolledUnderElevation: 1,
+      ),
+      cardTheme: CardThemeData(
+        elevation: 2,
+        shadowColor: Colors.black26,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      ),
+      navigationBarTheme: const NavigationBarThemeData(
+        indicatorShape: StadiumBorder(),
+      ),
     );
   }
 }

@@ -86,6 +86,7 @@ curl http://localhost:8787/health
 | GET | `/recipes/:id` | Yes | Get a single recipe by ID |
 | GET | `/recipes/:id/nutrition` | Yes | Detailed nutrition breakdown per ingredient |
 | POST | `/recipes/:id/cover` | Yes | Upload a cover image for a recipe (JPEG/PNG/WebP, max 10 MB) |
+| PATCH | `/recipes/:id/user-view` | Yes | Save/unsave, favorite/unfavorite, add notes |
 | GET | `/images/:asset_id` | No | Serve an image from R2 with cache headers |
 
 ### Recipe Capture
@@ -259,6 +260,32 @@ The `IMAGES` binding is already configured in `wrangler.toml`.
 
 See [ADR-007: Cover Image Generation](docs/adr/007-cover-image-generation.md) for the full design rationale.
 
+## Mobile UX Surfaces
+
+The app implements three primary UX surfaces from SPEC section 15:
+
+### Home -- Recipe Grid
+- Bottom navigation with three tabs: Recipes, Grocery, Profile
+- Searchable recipe grid with auto-grouped sections (favorites, by tag)
+- Responsive layout (2 columns on phone, 3+ on tablet)
+- Favorite recipes with a heart overlay on cards
+
+### Recipe View -- Cooking Mode
+- Full recipe detail with ingredients (checkboxes), steps, nutrition, source attribution
+- "Start Cooking" button enters hands-free cooking mode
+- Cooking mode: dark theme, large text, step-by-step swipe navigation
+- Auto-detects timers in instructions (e.g., "cook for 15 minutes") and offers in-app countdown
+- Screen stays awake during cooking (wakelock)
+- Ingredient checklist overlay
+
+### Grocery List
+- Select recipes to build a consolidated shopping list
+- Intelligently merges duplicate ingredients (e.g., "2 cups flour" + "1 cup flour" = "3 cups flour")
+- Groups items by category (produce, dairy, meat, pantry, etc.)
+- Tap to check off items, clear completed
+
+See [ADR-009: UX Surfaces](docs/adr/009-ux-surfaces.md) for design rationale.
+
 ## Running All Tests
 
 ```bash
@@ -295,3 +322,4 @@ See [ADR-002: Observability](docs/adr/002-observability.md) for the full design 
 - [ADR-005: Capture Pipeline](docs/adr/005-capture-pipeline.md)
 - [ADR-006: Ingredient & Nutrition Pipeline](docs/adr/006-ingredient-nutrition-pipeline.md)
 - [ADR-007: Cover Image Generation](docs/adr/007-cover-image-generation.md)
+- [ADR-009: UX Surfaces](docs/adr/009-ux-surfaces.md)

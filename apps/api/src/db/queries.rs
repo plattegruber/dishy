@@ -25,7 +25,7 @@ use crate::types::capture::{CaptureInput, ExtractionArtifact};
 #[cfg(target_arch = "wasm32")]
 use crate::types::ids::{CaptureId, UserId};
 #[cfg(target_arch = "wasm32")]
-use crate::types::recipe::{ResolvedRecipe, UserRecipeView};
+use crate::types::recipe::ResolvedRecipe;
 
 /// Errors that can occur during database operations.
 #[derive(Debug, thiserror::Error)]
@@ -529,55 +529,6 @@ async fn row_to_recipe(
     })
 }
 
-/// Upserts a user's recipe view (save, favorite, notes, patches).
-///
-/// # Arguments
-///
-/// * `db` -- D1 database binding.
-/// * `view` -- The user recipe view to persist.
-///
-/// # Errors
-///
-/// Returns `DbError` on query or serialization failure.
-#[cfg(target_arch = "wasm32")]
-pub async fn upsert_user_recipe_view(
-    db: &worker::d1::D1Database,
-    view: &UserRecipeView,
-) -> Result<(), DbError> {
-    use worker::wasm_bindgen::JsValue;
-
-    let patches_json = serde_json::to_string(&view.patches)
-        .map_err(|e| DbError::SerializationError(e.to_string()))?;
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let notes_val = match &view.notes {
-        Some(n) => JsValue::from_str(n),
-        None => JsValue::null(),
-    };
-
-    let statement = db.prepare(
-        "INSERT INTO user_recipe_views (recipe_id, user_id, saved, favorite, notes, patches_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT(recipe_id, user_id) DO UPDATE SET saved = ?3, favorite = ?4, notes = ?5, patches_json = ?6, updated_at = ?8"
-    );
-
-    statement
-        .bind(&[
-            JsValue::from_str(view.recipe_id.as_str()),
-            JsValue::from_str(view.user_id.as_str()),
-            JsValue::from_f64(f64::from(i32::from(view.saved))),
-            JsValue::from_f64(f64::from(i32::from(view.favorite))),
-            notes_val,
-            JsValue::from_str(&patches_json),
-            JsValue::from_str(&now),
-            JsValue::from_str(&now),
-        ])
-        .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
-        .run()
-        .await
-        .map_err(|e| DbError::QueryFailed(format!("run failed: {e}")))?;
-
-    Ok(())
-}
-
 /// Updates the cover image for a recipe.
 ///
 /// # Arguments
@@ -617,6 +568,103 @@ pub async fn update_recipe_cover(
         .map_err(|e| DbError::QueryFailed(format!("run failed: {e}")))?;
 
     Ok(())
+}
+
+/// Upserts a user recipe view (save/unsave, favorite/unfavorite, notes).
+///
+/// Inserts a new row if one doesn't exist, or updates the existing row.
+/// Only non-null fields are updated when a row already exists.
+///
+/// # Arguments
+///
+/// * `db` -- D1 database binding.
+/// * `recipe_id` -- The recipe to update the view for.
+/// * `user_id` -- The user who owns the view.
+/// * `saved` -- Whether the recipe is saved (optional, preserves existing if None).
+/// * `favorite` -- Whether the recipe is favorited (optional).
+/// * `notes` -- The user's notes (optional).
+///
+/// # Errors
+///
+/// Returns `DbError::QueryFailed` if the query fails.
+#[cfg(target_arch = "wasm32")]
+pub async fn upsert_user_recipe_view(
+    db: &worker::d1::D1Database,
+    recipe_id: &str,
+    user_id: &UserId,
+    saved: Option<bool>,
+    favorite: Option<bool>,
+    notes: Option<&str>,
+) -> Result<(), DbError> {
+    use worker::wasm_bindgen::JsValue;
+
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let saved_val = saved.unwrap_or(true);
+    let favorite_val = favorite.unwrap_or(false);
+    let notes_val = match notes {
+        Some(n) => JsValue::from_str(n),
+        None => JsValue::null(),
+    };
+
+    let statement = db.prepare(
+        "INSERT INTO user_recipe_views (recipe_id, user_id, saved, favorite, notes, patches_json, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, '[]', ?6, ?7) \
+         ON CONFLICT (recipe_id, user_id) DO UPDATE SET \
+         saved = COALESCE(?3, saved), \
+         favorite = COALESCE(?4, favorite), \
+         notes = COALESCE(?5, notes), \
+         updated_at = ?7"
+    );
+
+    statement
+        .bind(&[
+            JsValue::from_str(recipe_id),
+            JsValue::from_str(user_id.as_str()),
+            JsValue::from_bool(saved_val),
+            JsValue::from_bool(favorite_val),
+            notes_val,
+            JsValue::from_str(&now),
+            JsValue::from_str(&now),
+        ])
+        .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
+        .run()
+        .await
+        .map_err(|e| DbError::QueryFailed(format!("run failed: {e}")))?;
+
+    Ok(())
+}
+
+/// Fetches a user recipe view for a specific recipe and user.
+///
+/// Returns `Ok(None)` if no view exists.
+#[cfg(target_arch = "wasm32")]
+pub async fn get_user_recipe_view(
+    db: &worker::d1::D1Database,
+    recipe_id: &str,
+    user_id: &UserId,
+) -> Result<Option<serde_json::Value>, DbError> {
+    use worker::wasm_bindgen::JsValue;
+
+    let statement = db.prepare(
+        "SELECT recipe_id, user_id, saved, favorite, notes, patches_json FROM user_recipe_views WHERE recipe_id = ?1 AND user_id = ?2"
+    );
+
+    let result = statement
+        .bind(&[
+            JsValue::from_str(recipe_id),
+            JsValue::from_str(user_id.as_str()),
+        ])
+        .map_err(|e| DbError::QueryFailed(format!("bind failed: {e}")))?
+        .all()
+        .await
+        .map_err(|e| DbError::QueryFailed(format!("query failed: {e}")))?;
+
+    let rows = result
+        .results::<serde_json::Value>()
+        .map_err(|e| DbError::QueryFailed(format!("results parse failed: {e}")))?;
+
+    Ok(rows.into_iter().next())
 }
 
 // Verify domain types are importable on non-wasm targets (catches breakage early).

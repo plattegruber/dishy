@@ -7,6 +7,7 @@
 library;
 
 export 'models/capture.dart';
+export 'models/grocery.dart';
 export 'models/ids.dart';
 export 'models/ingredient.dart';
 export 'models/nutrition.dart';

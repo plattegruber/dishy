@@ -1,7 +1,8 @@
 /// Recipe card widget for the grid layout.
 ///
 /// Displays a recipe with its cover image (or a colored placeholder),
-/// title, and metadata (time, servings). Designed for a 2-column grid.
+/// title, metadata (time, servings), and an optional favorite button.
+/// Designed for responsive grid layouts.
 ///
 /// Implements SPEC section 15: "Home: Grid layout, auto-grouped sections."
 library;
@@ -17,19 +18,29 @@ import '../../domain/models/recipe.dart';
 /// Otherwise, a deterministic color placeholder with the recipe's
 /// initial is shown. The placeholder color matches the server-side
 /// SVG cover background.
+///
+/// Optionally shows a favorite heart icon overlay.
 class RecipeCard extends StatelessWidget {
   /// Creates a recipe card for the given [recipe].
   const RecipeCard({
     required this.recipe,
+    this.isFavorite = false,
     this.onTap,
+    this.onFavoriteToggle,
     super.key,
   });
 
   /// The recipe to display.
   final ResolvedRecipe recipe;
 
+  /// Whether this recipe is favorited by the user.
+  final bool isFavorite;
+
   /// Callback when the card is tapped.
   final VoidCallback? onTap;
+
+  /// Callback when the favorite button is tapped.
+  final VoidCallback? onFavoriteToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -40,21 +51,36 @@ class RecipeCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       elevation: 2,
+      shadowColor: Colors.black26,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: InkWell(
         onTap: onTap,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            // Cover image area
+            // Cover image area with favorite overlay
             Expanded(
               flex: 3,
-              child: _CoverImage(
-                imageUrl: imageUrl,
-                placeholderColor: placeholderColor,
-                initial: initial,
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  _CoverImage(
+                    imageUrl: imageUrl,
+                    placeholderColor: placeholderColor,
+                    initial: initial,
+                  ),
+                  if (onFavoriteToggle != null)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: _FavoriteButton(
+                        isFavorite: isFavorite,
+                        onToggle: onFavoriteToggle!,
+                      ),
+                    ),
+                ],
               ),
             ),
             // Title and metadata
@@ -81,6 +107,37 @@ class RecipeCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Favorite heart button overlay on recipe cards.
+class _FavoriteButton extends StatelessWidget {
+  const _FavoriteButton({
+    required this.isFavorite,
+    required this.onToggle,
+  });
+
+  final bool isFavorite;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black38,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onToggle,
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(
+            isFavorite ? Icons.favorite : Icons.favorite_border,
+            color: isFavorite ? Colors.red : Colors.white,
+            size: 20,
+          ),
         ),
       ),
     );

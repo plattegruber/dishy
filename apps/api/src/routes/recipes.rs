@@ -1117,6 +1117,156 @@ pub async fn handle_get_capture_status(
     Ok(resp)
 }
 
+/// Request body for the PATCH /recipes/:id/user-view endpoint.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Deserialize)]
+pub struct PatchUserViewRequest {
+    /// Whether to save/unsave the recipe.
+    pub saved: Option<bool>,
+    /// Whether to favorite/unfavorite the recipe.
+    pub favorite: Option<bool>,
+    /// User notes for the recipe.
+    pub notes: Option<String>,
+}
+
+/// Response for the PATCH /recipes/:id/user-view endpoint.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Serialize)]
+struct UserViewResponse {
+    /// The recipe ID.
+    recipe_id: String,
+    /// Whether the recipe is saved.
+    saved: bool,
+    /// Whether the recipe is favorited.
+    favorite: bool,
+    /// User notes.
+    notes: Option<String>,
+}
+
+/// Handles `PATCH /recipes/:id/user-view` -- save/unsave, favorite/unfavorite, add notes.
+///
+/// # Authentication
+///
+/// Requires a valid Clerk JWT in the `Authorization` header.
+///
+/// # Request Body
+///
+/// ```json
+/// { "saved": true, "favorite": true, "notes": "Great recipe!" }
+/// ```
+///
+/// # Response
+///
+/// Returns the updated user view as JSON.
+#[cfg(target_arch = "wasm32")]
+pub async fn handle_patch_user_view(
+    mut req: worker::Request,
+    ctx: worker::RouteContext<()>,
+) -> worker::Result<worker::Response> {
+    use crate::db::queries;
+    use crate::middleware::{
+        attach_correlation_header, authenticate_request, extract_request_context,
+    };
+    use crate::types::ids::UserId;
+
+    let request_ctx = extract_request_context(&req);
+
+    let recipe_id = match ctx.param("id") {
+        Some(id) => id.to_string(),
+        None => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = error_response("missing_id", "Recipe ID is required", 400)?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    // Authenticate
+    let jwks_url = ctx
+        .var("CLERK_JWKS_URL")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|_| "https://api.clerk.com/v1/jwks".to_string());
+
+    let claims = match authenticate_request(&req, &request_ctx, &jwks_url).await {
+        Ok(claims) => claims,
+        Err(auth_error) => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = auth_error.to_response()?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    let user_id = UserId::new(&claims.sub);
+
+    // Parse request body
+    let body_text = req
+        .text()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("failed to read request body: {e}")))?;
+
+    let patch_req: PatchUserViewRequest = match serde_json::from_str(&body_text) {
+        Ok(r) => r,
+        Err(e) => {
+            flush_logs(&request_ctx, &ctx).await;
+            let mut resp = error_response(
+                "invalid_request",
+                &format!("Invalid request body: {e}"),
+                400,
+            )?;
+            attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+            return Ok(resp);
+        }
+    };
+
+    let db = ctx
+        .env
+        .d1("DB")
+        .map_err(|e| worker::Error::RustError(format!("failed to get D1 binding: {e}")))?;
+
+    // Upsert the user recipe view
+    if let Err(e) = queries::upsert_user_recipe_view(
+        &db,
+        &recipe_id,
+        &user_id,
+        patch_req.saved,
+        patch_req.favorite,
+        patch_req.notes.as_deref(),
+    )
+    .await
+    {
+        request_ctx.logger.error(
+            "Failed to update user recipe view",
+            HashMap::from([(
+                "error".to_string(),
+                serde_json::Value::String(e.to_string()),
+            )]),
+        );
+        flush_logs(&request_ctx, &ctx).await;
+        let mut resp =
+            error_response("db_error", &format!("Failed to update user view: {e}"), 500)?;
+        attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+        return Ok(resp);
+    }
+
+    // Return the updated view
+    let body = UserViewResponse {
+        recipe_id,
+        saved: patch_req.saved.unwrap_or(true),
+        favorite: patch_req.favorite.unwrap_or(false),
+        notes: patch_req.notes,
+    };
+
+    flush_logs(&request_ctx, &ctx).await;
+
+    let json = serde_json::to_string(&body).map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+    let mut resp = worker::Response::ok(json)?;
+    let _ = resp.headers_mut().set("Content-Type", "application/json");
+    attach_correlation_header(&mut resp, request_ctx.logger.correlation_id())?;
+    Ok(resp)
+}
+
 // Non-WASM stubs for compilation on the host target (used in `cargo test`).
 // The Worker runtime (Router, D1, Fetch) is not available outside wasm32,
 // so these stubs allow the crate to compile and run unit tests on the host.
@@ -1164,6 +1314,16 @@ pub async fn handle_get_nutrition(
 /// Stub for `handle_get_capture_status` on non-WASM targets.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn handle_get_capture_status(
+    req: worker::Request,
+    ctx: worker::RouteContext<()>,
+) -> worker::Result<worker::Response> {
+    let _ = (req, ctx);
+    worker::Response::error("Not available outside WASM runtime", 501)
+}
+
+/// Stub for `handle_patch_user_view` on non-WASM targets.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn handle_patch_user_view(
     req: worker::Request,
     ctx: worker::RouteContext<()>,
 ) -> worker::Result<worker::Response> {
